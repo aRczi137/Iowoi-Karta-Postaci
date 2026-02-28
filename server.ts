@@ -198,6 +198,89 @@ async function startServer() {
     res.json({ id: result.lastInsertRowid, success: true });
   });
 
+  app.delete("/api/characters/:charId/stat_history/:logId", (req, res) => {
+    const { charId, logId } = req.params;
+
+    // Fetch the log to know what to revert
+    const log = db.prepare("SELECT * FROM stat_history WHERE id = ? AND character_id = ?").get(logId, charId) as any;
+    if (!log) {
+      return res.status(404).json({ error: "Log not found" });
+    }
+
+    const { stat_name, amount } = log;
+
+    // Delete the log
+    db.prepare("DELETE FROM stat_history WHERE id = ?").run(logId);
+
+    // Update characters table - revert the stats
+    const charRow = db.prepare("SELECT stats, general_stats, profession, skills FROM characters WHERE id = ?").get(charId) as any;
+    if (charRow && charRow.stats) {
+      const regex = new RegExp(`(${stat_name}:\\s*)(\\d+)`, 'i');
+      let updatedStats = charRow.stats;
+
+      const matchFound = updatedStats.match(regex);
+      if (matchFound) {
+        updatedStats = updatedStats.replace(regex, (match: string, p1: string, p2: string) => {
+          const currentVal = parseInt(p2);
+          // Prevent stats from going below 1, though standard base is 5
+          const newVal = Math.max(1, currentVal - amount);
+          return `${p1}${newVal}`;
+        });
+
+        // Recalculate derived stats
+        const statsObj: Record<string, number> = {};
+        updatedStats.split(',').forEach((s: string) => {
+          const [k, v] = s.split(':').map((str: string) => str.trim());
+          if (k && v) statsObj[k] = parseInt(v) || 5;
+        });
+
+        const wytrzymalosc = statsObj['Wytrzymałość'] || 5;
+        const szybkosc = statsObj['Szybkość'] || 5;
+        const sila = statsObj['Siła'] || 5;
+        const reiatsu = statsObj['Reiatsu'] || 5;
+        const kontrola = statsObj['Kontrola Reiatsu'] || 5;
+
+        const udzwig = Math.ceil(Math.pow(sila, 1.8) * 1.5) + (wytrzymalosc * 5);
+        const isQuincy = charRow.profession?.toLowerCase().includes('quincy');
+        const predkoscSr = Math.max(1, isQuincy ? szybkosc * 0.8 : szybkosc);
+        const predkoscMax = Math.max(1, isQuincy ? szybkosc * 2.2 : szybkosc * 3);
+
+        const pz = wytrzymalosc * 10;
+        const hasWulkan = charRow.skills?.includes('Wulkan reiatsu');
+        const pr = hasWulkan
+          ? Math.floor(1.3 * Math.pow(0.75 * reiatsu + 0.25 * kontrola, 2))
+          : Math.floor(Math.pow(0.75 * reiatsu + 0.25 * kontrola, 2));
+
+        const updatedGeneralStats = `Udźwig: ${udzwig}kg, Prędkość (śr.): ${predkoscSr}km/h, Prędkość (max.): ${predkoscMax}km/h, PŻ: ${pz}, PR: ${pr}`;
+
+        const oldPzMatch = charRow.general_stats?.match(/PŻ:\s*(\d+)/i);
+        const oldPrMatch = charRow.general_stats?.match(/PR:\s*(\d+)/i);
+        const oldPz = oldPzMatch ? parseInt(oldPzMatch[1]) : pz;
+        const oldPr = oldPrMatch ? parseInt(oldPrMatch[1]) : pr;
+
+        const updateQuery = `
+          UPDATE characters 
+          SET stats = ?, 
+              general_stats = ?,
+              current_hp = CASE WHEN current_hp IS NOT NULL THEN current_hp + (? - ?) ELSE ? END,
+              current_pr = CASE WHEN current_pr IS NOT NULL THEN current_pr + (? - ?) ELSE ? END
+          WHERE id = ?
+        `;
+
+        // Clamp HP/PR so subtracting max HP doesn't drop current HP below 0 instantly if it's high, though here they just scale down
+        db.prepare(updateQuery).run(
+          updatedStats,
+          updatedGeneralStats,
+          pz, oldPz, pz,
+          pr, oldPr, pr,
+          charId
+        );
+      }
+    }
+
+    res.json({ success: true });
+  });
+
   app.get("/api/posts", (req, res) => {
     const posts = db.prepare("SELECT * FROM posts ORDER BY created_at DESC").all();
     res.json(posts);

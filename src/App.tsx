@@ -2568,18 +2568,38 @@ export default function App() {
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const fetchStatHistory = async (id: number) => {
     try {
-      const res = await fetch(`/api/characters/${id}/stat_history`);
-      const data = await res.json();
-      setStatHistories(prev => ({ ...prev, [id]: data }));
+      const response = await fetch(`/api/characters/${id}/stat_history`);
+      if (response.ok) {
+        const data = await response.json();
+        setStatHistories(prev => ({ ...prev, [id]: data }));
+      }
     } catch (e) {
-      console.error("Failed to load stat history", e);
+      console.error("Błąd ładowania historii:", e);
+    }
+  };
+
+  const undoStatHistory = async (charId: number, logId: number) => {
+    if (!confirm('Czy na pewno chcesz cofnąć to dodanie statystyki? Statystyki postaci zostaną zmniejszone o dodaną wartość.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/characters/${charId}/stat_history/${logId}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        // Refresh everything
+        fetchData();
+      } else {
+        alert("Wystąpił błąd podczas proporcjonalnego cofania statystyki");
+      }
+    } catch (e) {
+      console.error("Błąd cofania statystyki:", e);
     }
   };
 
@@ -2866,12 +2886,19 @@ export default function App() {
                                 </h4>
                                 <div className="space-y-2 max-h-24 overflow-y-auto pr-1 custom-scrollbar">
                                   {statHistories[char.id].map(log => (
-                                    <div key={log.id} className="bg-zinc-900/50 p-2 rounded border border-zinc-800 text-[10px] shrink-0">
-                                      <div className="flex justify-between items-start mb-1">
+                                    <div key={log.id} className="bg-zinc-900/50 p-2 rounded border border-zinc-800 text-[10px] shrink-0 relative group">
+                                      <div className="flex justify-between items-start mb-1 pr-6">
                                         <span className="font-bold text-emerald-400">+{log.amount} {log.stat_name}</span>
                                         <span className="text-zinc-600">{new Date(log.created_at).toLocaleDateString()}</span>
                                       </div>
-                                      {log.comment && <p className="text-zinc-400 italic">"{log.comment}"</p>}
+                                      {log.comment && <p className="text-zinc-400 italic pr-6 truncate" title={log.comment}>"{log.comment}"</p>}
+                                      <button
+                                        onClick={() => undoStatHistory(char.id, log.id)}
+                                        className="absolute right-2 top-2 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        title="Cofnij tę zmianę (odejmie punkty i zaktualizuje HP/PR)"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
                                     </div>
                                   ))}
                                 </div>
