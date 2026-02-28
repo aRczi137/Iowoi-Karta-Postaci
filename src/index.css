@@ -1,0 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,700;1,700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Playfair Display", serif;
+}
+
+body {
+  @apply bg-[#0a0a0a] text-zinc-100 font-sans;
+}
+
+.manga-border {
+  @apply border-2 border-zinc-800 hover:border-zinc-400 transition-colors duration-300;
+}
+
+.glass-panel {
+  @apply bg-zinc-900/50 backdrop-blur-md border border-white/10;
+}
+
+.bleach-title {
+  @apply font-display italic text-4xl tracking-tighter uppercase;
+}
+
+/* Custom Scrollbar for elegant UI */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(63, 63, 70, 0.4);
+  /* zinc-700 with opacity */
+  border-radius: 20px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(63, 63, 70, 0.8);
+}
