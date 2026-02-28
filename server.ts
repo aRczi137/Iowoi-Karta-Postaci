@@ -132,14 +132,67 @@ async function startServer() {
     const result = stmt.run(characterId, stat_name, amount, comment);
 
     // Update characters table - we need to fetch, parse, and string replace the stats
-    const charRow = db.prepare("SELECT stats FROM characters WHERE id = ?").get(characterId) as { stats: string };
+    const charRow = db.prepare("SELECT stats, general_stats, profession, skills FROM characters WHERE id = ?").get(characterId) as any;
     if (charRow && charRow.stats) {
+      // 1. Update the base stats string
       const regex = new RegExp(`(${stat_name}:\\s*)(\\d+)`, 'i');
-      const updatedStats = charRow.stats.replace(regex, (match, p1, p2) => {
+      const updatedStats = charRow.stats.replace(regex, (match: string, p1: string, p2: string) => {
         const currentVal = parseInt(p2);
         return `${p1}${currentVal + amount}`;
       });
-      db.prepare("UPDATE characters SET stats = ? WHERE id = ?").run(updatedStats, characterId);
+
+      // 2. Parse all stats from the fresh string to recalculate general_stats
+      const statsObj: Record<string, number> = {};
+      updatedStats.split(',').forEach((s: string) => {
+        const [k, v] = s.split(':').map((str: string) => str.trim());
+        if (k && v) statsObj[k] = parseInt(v) || 5;
+      });
+
+      const wytrzymalosc = statsObj['Wytrzymałość'] || 5;
+      const szybkosc = statsObj['Szybkość'] || 5;
+      const sila = statsObj['Siła'] || 5;
+      const reiatsu = statsObj['Reiatsu'] || 5;
+      const kontrola = statsObj['Kontrola Reiatsu'] || 5;
+      const zrecznosc = statsObj['Zręczność'] || 5;
+
+      // 3. Re-calculate metrics
+      const udzwig = Math.ceil(Math.pow(sila, 1.8) * 1.5) + (wytrzymalosc * 5);
+      const isQuincy = charRow.profession?.toLowerCase().includes('quincy');
+      const predkoscSr = Math.max(1, isQuincy ? szybkosc * 0.8 : szybkosc);
+      const predkoscMax = Math.max(1, isQuincy ? szybkosc * 2.2 : szybkosc * 3);
+
+      const pz = wytrzymalosc * 10;
+
+      const hasWulkan = charRow.skills?.includes('Wulkan reiatsu');
+      const pr = hasWulkan
+        ? Math.floor(1.3 * Math.pow(0.75 * reiatsu + 0.25 * kontrola, 2))
+        : Math.floor(Math.pow(0.75 * reiatsu + 0.25 * kontrola, 2));
+
+      const updatedGeneralStats = `Udźwig: ${udzwig}kg, Prędkość (śr.): ${predkoscSr}km/h, Prędkość (max.): ${predkoscMax}km/h, PŻ: ${pz}, PR: ${pr}`;
+
+      // 4. Extract current HP and PR to see if we need to adjust them (heal them up if max goes up)
+      const oldPzMatch = charRow.general_stats?.match(/PŻ:\s*(\d+)/i);
+      const oldPrMatch = charRow.general_stats?.match(/PR:\s*(\d+)/i);
+      const oldPz = oldPzMatch ? parseInt(oldPzMatch[1]) : pz;
+      const oldPr = oldPrMatch ? parseInt(oldPrMatch[1]) : pr;
+
+      // 5. Build query to update stats, general stats and bump missing current HP/PR if Max grew
+      const updateQuery = `
+        UPDATE characters 
+        SET stats = ?, 
+            general_stats = ?,
+            current_hp = CASE WHEN current_hp IS NOT NULL THEN current_hp + (? - ?) ELSE ? END,
+            current_pr = CASE WHEN current_pr IS NOT NULL THEN current_pr + (? - ?) ELSE ? END
+        WHERE id = ?
+      `;
+
+      db.prepare(updateQuery).run(
+        updatedStats,
+        updatedGeneralStats,
+        pz, oldPz, pz,
+        pr, oldPr, pr,
+        characterId
+      );
     }
 
     res.json({ id: result.lastInsertRowid, success: true });
