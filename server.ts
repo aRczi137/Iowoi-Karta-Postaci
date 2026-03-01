@@ -2,6 +2,8 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 const db = new Database("rpg_companion.db");
 
