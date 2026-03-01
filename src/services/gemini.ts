@@ -144,6 +144,69 @@ ${personality || '(not provided)'}`;
   return data.image as string;
 }
 
+export async function generateSimplifiedNPC(gmNote: string) {
+  // Step 1: Extract basic details from GM Note using Gemini
+  const extractPrompt = `You are a Bleach RPG Game Master assistant. Read the GM's note about an NPC and extract their info into a structured JSON format.
+
+RULES:
+- Extract Name (invent one fitting Bleach if missing, e.g. Japanese name or Arrancar Spanish-sounding name).
+- Extract Age/Race/Profession into a brief 1-2 word string (e.g. "Shinigami", "Unknown Arrancar", "Academy Student").
+- Extract/Infer Appearance: Write a 1-sentence physical description (hair, eyes, clothing, build) suitable for image generation context.
+- Extract Personality/Relationship: Write a 2-3 sentence summary of how they act, their vibe, and their relationship/history with the player based on the note.
+- ALWAYS return ONLY valid JSON matching this structure:
+{
+  "name": "string",
+  "race_profession": "string",
+  "appearance": "string",
+  "personality": "string"
+}
+
+GM Note: "${gmNote}"`;
+
+  const extractResponse = await ai.models.generateContent({
+    model: geminiModel,
+    contents: extractPrompt,
+    config: {
+      responseMimeType: "application/json",
+    }
+  });
+
+  const rawJson = extractResponse.text?.trim() || "{}";
+  let npcData: any = {};
+
+  try {
+    npcData = JSON.parse(rawJson);
+  } catch (e) {
+    console.error("Failed to parse NPC JSON", e);
+    npcData = {
+      name: "Nieznajomy",
+      race_profession: "NPC",
+      appearance: "Zakapturzona postać, twarz ukryta w cieniu.",
+      personality: gmNote.slice(0, 100) + "..."
+    };
+  }
+
+  // Step 2: Use the existing avatar generator to create their portrait
+  // We pass the GM-derived appearance and personality directly
+  const avatarUrl = await generateCharacterAvatar(
+    npcData.appearance || "Tajemnicza postać z zaświatów",
+    undefined, // no reference image
+    npcData.race_profession,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    npcData.personality,
+    npcData.name
+  );
+
+  return {
+    ...npcData,
+    avatarUrl
+  };
+}
+
 export async function generateMangaPanel(postContent: string, characterDescriptions: string[]) {
   const prompt = `manga panel, Bleach manga style, Tite Kubo art style, black and white, ${postContent}, characters: ${characterDescriptions.join(", ")}, dynamic angles, heavy ink work, speed lines, dramatic shading, professional manga page`;
 

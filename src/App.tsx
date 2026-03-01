@@ -26,7 +26,7 @@ import {
   X
 } from 'lucide-react';
 import { Character, Post, StatHistory } from './types';
-import { generateCharacterAvatar, generateMangaPanel, getPostAssistance } from './services/gemini';
+import { generateCharacterAvatar, generateMangaPanel, getPostAssistance, generateSimplifiedNPC } from './services/gemini';
 import { cn } from './utils';
 import ReactMarkdown from 'react-markdown';
 
@@ -46,6 +46,113 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label:
     <span className="text-sm uppercase tracking-widest">{label}</span>
   </button>
 );
+
+const SimplifiedNPCForm = ({
+  initialCharacter,
+  onSave,
+  onCancel,
+}: {
+  initialCharacter?: Character;
+  onSave: (character: Partial<Character>) => void;
+  onCancel: () => void;
+}) => {
+  const [gmNote, setGmNote] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedNPC, setGeneratedNPC] = useState<Partial<Character> | null>(initialCharacter || null);
+
+  const handleGenerate = async () => {
+    if (!gmNote.trim()) return;
+    setIsGenerating(true);
+    try {
+      const data = await generateSimplifiedNPC(gmNote);
+      setGeneratedNPC({
+        name: data.name,
+        profession: data.race_profession,
+        appearance: data.appearance,
+        personality: data.personality,
+        avatar_url: data.avatarUrl,
+        type: 'NPC',
+        surname: '', quote: '', gender: 'Nieznana', age: '', weight: '', height: '',
+        history: '', equipment: '', money: '', skills: 'Brak', disadvantages: 'Brak',
+        stats: '', general_stats: '', techniques: 'Brak'
+      });
+    } catch (e: any) {
+      alert("Błąd generowania NPC: " + e.message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  return (
+    <div className="glass-panel p-8 rounded-3xl space-y-6">
+      <h3 className="text-2xl font-display italic uppercase border-b border-zinc-800 pb-4">Tajemniczy Nieznajomy (Nowy NPC)</h3>
+      <p className="text-sm text-zinc-400">Możesz opisać wygląd/charakter własnymi słowami albo wkleić notatkę od Mistrza Gry. AI automatycznie wyodrębni to, co najważniejsze i zrobi portret.</p>
+
+      {!generatedNPC ? (
+        <div className="space-y-4">
+          <textarea
+            value={gmNote}
+            onChange={e => setGmNote(e.target.value)}
+            placeholder="Opis od Mistrza Gry (np. Spotykacie w tawernie młodą kobietę o siwych włosach i bladych oczach. Twierdzi, że jest z 9 dywizji. Wydaje się bardzo nerwowa.)"
+            className="w-full h-40 bg-zinc-900/50 border border-zinc-700 rounded-xl p-4 text-sm resize-none focus:outline-none focus:border-white transition-colors"
+          />
+          <div className="flex justify-end gap-3 mt-4">
+            <button onClick={onCancel} className="px-6 py-2 rounded-lg text-sm text-zinc-400 hover:text-white transition-colors">Anuluj</button>
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating || !gmNote.trim()}
+              className="flex items-center gap-2 px-6 py-2 bg-white text-black font-bold uppercase tracking-widest text-[10px] rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
+            >
+              {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              Generuj z AI
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-6">
+          <div className="col-span-1">
+            <img src={generatedNPC.avatar_url!} alt="Avatar" className="w-full aspect-square object-cover rounded-2xl border border-zinc-800 shadow-xl" />
+          </div>
+          <div className="col-span-2 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-zinc-500 mb-1">Imię / Nazwa</label>
+                <input value={generatedNPC.name} onChange={e => setGeneratedNPC({ ...generatedNPC, name: e.target.value })} className="w-full bg-zinc-900/50 border border-zinc-700 rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-white transition-colors" />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-zinc-500 mb-1">Kim jest? (Frakcja/Rasa)</label>
+                <input value={generatedNPC.profession} onChange={e => setGeneratedNPC({ ...generatedNPC, profession: e.target.value })} className="w-full bg-zinc-900/50 border border-zinc-700 rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-white transition-colors" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-widest text-zinc-500 mb-1">Wygląd (do edycji)</label>
+              <textarea value={generatedNPC.appearance} onChange={e => setGeneratedNPC({ ...generatedNPC, appearance: e.target.value })} className="w-full h-20 bg-zinc-900/50 border border-zinc-700 rounded-lg p-3 text-sm focus:outline-none focus:border-white transition-colors resize-none" />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-widest text-zinc-500 mb-1">Osobowość / Relacja / Notatka z Sesji</label>
+              <textarea value={generatedNPC.personality} onChange={e => setGeneratedNPC({ ...generatedNPC, personality: e.target.value })} className="w-full h-24 bg-zinc-900/50 border border-zinc-700 rounded-lg p-3 text-sm focus:outline-none focus:border-white transition-colors resize-none" />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-zinc-800">
+              {!initialCharacter && (
+                <button onClick={() => setGeneratedNPC(null)} className="flex items-center gap-1 px-4 py-2 rounded-lg text-xs uppercase tracking-widest text-zinc-400 hover:text-white transition-colors"><Trash2 size={14} /> Wyczyść Ocenę AI</button>
+              )}
+              {initialCharacter && (
+                <button onClick={onCancel} className="flex items-center gap-1 px-4 py-2 rounded-lg text-xs uppercase tracking-widest text-zinc-400 hover:text-white transition-colors">Anuluj Edycję</button>
+              )}
+              <button
+                onClick={() => onSave(generatedNPC)}
+                className="flex items-center gap-2 px-6 py-2 bg-white text-black font-bold uppercase tracking-widest text-[10px] rounded-lg hover:bg-zinc-200 transition-colors shadow-lg shadow-white/10"
+              >
+                <Save size={16} /> Zapisz do Akt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ImageCarousel = ({ images, title }: { images: string[], title: string }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -3046,9 +3153,8 @@ export default function App() {
               </div>
 
               {isEditing ? (
-                <CharacterForm
-                  isNPC
-                  character={selectedCharacter || undefined}
+                <SimplifiedNPCForm
+                  initialCharacter={selectedCharacter || undefined}
                   onSave={handleSaveCharacter}
                   onCancel={() => { setIsEditing(false); setSelectedCharacter(null); }}
                 />
