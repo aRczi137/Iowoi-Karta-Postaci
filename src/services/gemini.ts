@@ -13,80 +13,148 @@ export async function generateCharacterAvatar(
   age?: string,
   weight?: string,
   height?: string,
-  additionalImages?: string[]
+  additionalImages?: string[],
+  personality?: string,
+  name?: string,
+  gender?: string,
 ) {
-  let characterDetails = [];
-  if (race) characterDetails.push(`Race: ${race}`);
-  if (profession) characterDetails.push(`Profession/Rank: ${profession}`);
-  if (age) characterDetails.push(`Age: ${age}`);
-  if (weight) characterDetails.push(`Weight: ${weight}kg`);
-  if (height) characterDetails.push(`Height: ${height}cm`);
+  // Use Gemini text to convert Polish description to an English image generation prompt
+  let imagePrompt: string;
+  try {
+    const contextParts = [
+      name && `Name: ${name}`,
+      gender && `Gender: ${gender}`,
+      race && `Race/Type: ${race}`,
+      profession && `Rank/Profession: ${profession}`,
+      age && `Age: ${age}`,
+      weight && `Weight: ${weight}kg`,
+      height && `Height: ${height}cm`,
+    ].filter(Boolean).join('\n');
 
-  const detailsString = characterDetails.length > 0 ? `\nCharacter Details: ${characterDetails.join(', ')}.` : '';
+    const hasRefImages = referenceImageBase64 || (additionalImages && additionalImages.length > 0);
 
-  const prompt = `Anime style avatar of a character from the Bleach universe. 
-  Description: ${description}.${detailsString}
-  Style: Tite Kubo's art style, clean lines, high contrast. 
-  Focus on a clear headshot/portrait.`;
+    const systemText = `You are an expert Stable Diffusion prompt engineer specializing in the manga series BLEACH by Tite Kubo.
 
-  const parts: any[] = [{ text: prompt }];
+Task: Convert the Polish character description below into a detailed English image generation prompt.
+${hasRefImages ? '\nIMPORTANT: Reference images are attached. Study the character\'s exact visual traits (hair, eyes, face shape, clothing, colors) from them and prioritize these in the prompt.' : ''}
 
-  const allImages = [];
-  if (referenceImageBase64) allImages.push(referenceImageBase64);
-  if (additionalImages && additionalImages.length > 0) {
-    allImages.push(...additionalImages);
-  }
+GLOBAL STYLE REQUIREMENTS:
+- Art style: Tite Kubo manga style, Bleach anime style
+- Linework: bold black ink outlines, clean precise lines, strong neck/collarbone shadows
+- Shading: high contrast cel shading with selective color accents
+- Character design: angular facial features, sharp jawline, clean symmetric anime eyes (no artifacts), dynamic manga hair
+- Composition: VARY the framing — choose whichever fits the character's personality and story:
+  * Full-body dynamic action pose with zanpakuto/weapon drawn (for fighters, shinigami, hollow)
+  * Full-body standing pose in their environment (training ground, Rukongai street, Hueco Mundo desert)
+  * Half-body or waist-up with expressive gesture or dramatic lighting
+  * Scene/moment: character in a meaningful setting from their backstory (academy courtyard, battle aftermath, quiet meditation, sparring)
+  * Avoid generic "neutral bust portrait" — make it feel alive and cinematic
 
-  for (const imgBase64 of allImages) {
-    const base64Data = imgBase64.includes(',')
-      ? imgBase64.split(',')[1]
-      : imgBase64;
+RACE/PROFESSION-SPECIFIC APPEARANCE GUIDE (choose based on Character info):
+- Shinigami (low rank / unseated): black shikahusho kimono with white obi sash, katana zanpakuto at hip, Soul Society background (stone corridors, cherry blossoms)
+- Shinigami (captain): black shikahusho + white captain's haori cloak with division symbol, commanding pose
+- Shinigami (lieutenant): black shikahusho + lieutenant badge on arm
+- Academy Student (Shinigami Academy): male → white uniform with blue trim and coloring; female → white uniform with red/pink trim — NOT a black robe
+- Hollow: bone white mask (full or partial), dark corrupted energy, monstrous features, Hueco Mundo white sand desert background
+- Arrancar: white military uniform (Espada-style), hollow mask fragment on body, cold elegant appearance, Las Noches palace background
+- Quincy: white European-style combat uniform with cross motifs, reishi bow weapon, blue spiritual energy particles
+- Fullbringer: modern casual or stylish streetwear, no spiritual uniform, contemporary Japanese city background
+- Bount: gothic elegant Victorian or European clothing, doll companion nearby, dark atmospheric setting
+- Rukongai Soul / Dusza: simple peasant robes, worn fabric, Rukongai district wooden slums background
+- Kami / Divine being: ethereal robes, divine glow, celestial background
+- Hollow/Human hybrid (Visored): black shikahusho + hollow mask half-materialized on face
 
-    parts.unshift({
-      inlineData: {
-        mimeType: "image/png",
-        data: base64Data
-      }
-    });
-  }
+RULES:
+- Base clothing and background on the character's race and rank — NEVER use black shinigami robes for Academy Students or non-shinigami characters
+- Output ONLY a comma-separated English prompt, no labels or commentary, under 150 words
+- CRITICAL — order elements like this (most important first for SD1.5):
+  1. Gender + age tag (e.g. "1boy, young male teenager" or "1girl, young female")
+  2. Hair details (color, style, length)
+  3. Eye color and expression
+  4. Skin, scars, distinctive marks
+  5. Clothing (race-specific — be very literal, e.g. "white kimono with blue trim" NOT just "uniform")
+  6. Weapon/accessories
+  7. Pose and scene
+  8. Background atmosphere
 
-  const response = await ai.models.generateContent({
-    model: imageModel,
-    contents: { parts },
-    config: {
-      responseModalities: [Modality.TEXT, Modality.IMAGE],
-    },
-  });
+Character info:
+${contextParts}
 
-  for (const part of response.candidates[0].content.parts) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+Appearance (Polish): ${description}
+
+Personality/Character traits (Polish — use to decide pose, expression, energy):
+${personality || '(not provided)'}`;
+
+    // Build multimodal parts: text + optional reference images
+    const imageParts: any[] = [];
+    if (referenceImageBase64) {
+      const [header, rawData] = referenceImageBase64.includes(',')
+        ? referenceImageBase64.split(',')
+        : ['data:image/jpeg;base64', referenceImageBase64];
+      const mimeType = header.replace('data:', '').replace(';base64', '') || 'image/jpeg';
+      imageParts.push({ inlineData: { mimeType, data: rawData } });
     }
+    if (additionalImages && additionalImages.length > 0) {
+      for (const img of additionalImages.slice(0, 3)) {
+        const base64data = img.includes(',') ? img.split(',')[1] : img;
+        imageParts.push({ inlineData: { mimeType: 'image/jpeg', data: base64data } });
+      }
+    }
+
+    // Always use array format — more reliable with @google/genai SDK
+    const parts: any[] = [{ text: systemText }, ...imageParts];
+    const contents = [{ role: 'user', parts }];
+
+    const geminiResponse = await ai.models.generateContent({
+      model: geminiModel,
+      contents: contents as any,
+    });
+
+    // response.text may be undefined with array-format contents — extract explicitly
+    const extracted = (
+      geminiResponse.text ||
+      (geminiResponse as any).candidates?.[0]?.content?.parts?.[0]?.text ||
+      ''
+    ).trim();
+    console.log('[Avatar] Gemini extracted prompt:', extracted || '(empty)');
+    // animagine-xl-3.1 prefix (SDXL anime model, danbooru-style tags)
+    imagePrompt = [
+      `masterpiece, best quality, very aesthetic, absurdres, highres`,
+      extracted,
+    ].join(', ');
+  } catch (err: any) {
+    // Log the actual Gemini error so we can debug
+    console.error('[Avatar] Gemini prompt generation failed:', err?.message || err);
+    // Fallback if Gemini fails
+    const parts = [age && `${age} years old`, race, profession].filter(Boolean).join(', ');
+    imagePrompt = `masterpiece, best quality, Bleach anime art style, Tite Kubo character design, ${parts ? parts + ', ' : ''}${description}, black shinigami shikahusho robe, bold black ink outlines, high contrast manga inking, angular facial features, expressive eyes, dramatic lighting, Soul Society atmosphere`;
   }
-  return null;
+
+  // dreamlike-anime-1.0 is trained on 768px — use 768x768 for best results
+  const res = await fetch('/api/generate-avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: imagePrompt, width: 768, height: 768 }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `Server error: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.image as string;
 }
 
 export async function generateMangaPanel(postContent: string, characterDescriptions: string[]) {
-  const prompt = `A high-quality manga panel in the style of Bleach (Tite Kubo). 
-  Scene: ${postContent}. 
-  Characters involved: ${characterDescriptions.join(", ")}. 
-  Style: Black and white manga panel, dynamic angles, heavy ink work, speed lines, dramatic shading. 
-  Make it look like a page from the Bleach manga.`;
+  const prompt = `manga panel, Bleach manga style, Tite Kubo art style, black and white, ${postContent}, characters: ${characterDescriptions.join(", ")}, dynamic angles, heavy ink work, speed lines, dramatic shading, professional manga page`;
 
-  const response = await ai.models.generateContent({
-    model: imageModel,
-    contents: { parts: [{ text: prompt }] },
-    config: {
-      responseModalities: [Modality.TEXT, Modality.IMAGE],
-    },
+  const res = await fetch('/api/generate-avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, width: 768, height: 512 }),
   });
-
-  for (const part of response.candidates[0].content.parts) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
-    }
-  }
-  return null;
+  if (!res.ok) throw new Error(`Server error: ${res.status}`);
+  const data = await res.json();
+  return data.image as string;
 }
 
 export async function getPostAssistance(gmPost: string, characterInfo: string, userIntent: string) {

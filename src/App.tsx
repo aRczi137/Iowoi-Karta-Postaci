@@ -22,7 +22,8 @@ import {
   Minus,
   FileText,
   ArrowUpCircle,
-  Clock
+  Clock,
+  X
 } from 'lucide-react';
 import { Character, Post, StatHistory } from './types';
 import { generateCharacterAvatar, generateMangaPanel, getPostAssistance } from './services/gemini';
@@ -1557,6 +1558,7 @@ const CharacterForm = ({ character, onSave, onCancel, isNPC = false }: { charact
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showAvatarPreview, setShowAvatarPreview] = useState(false);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1578,13 +1580,16 @@ const CharacterForm = ({ character, onSave, onCancel, isNPC = false }: { charact
 
       const url = await generateCharacterAvatar(
         formData.appearance,
-        formData.avatar_url,
+        undefined,              // don't pass AI-generated avatar as reference
         race,
         formData.profession,
         formData.age,
         formData.weight,
         formData.height,
-        additionalImages
+        additionalImages,       // user-uploaded reference photos
+        formData.personality,   // personality traits → influence pose/expression
+        `${formData.name} ${formData.surname}`.trim(),
+        formData.gender,
       );
       if (url) setFormData(prev => ({ ...prev, avatar_url: url }));
     } catch (e: any) {
@@ -1815,14 +1820,49 @@ const CharacterForm = ({ character, onSave, onCancel, isNPC = false }: { charact
         <div className="space-y-6">
           <div className="relative group aspect-square rounded-2xl overflow-hidden border-2 border-dashed border-zinc-800 bg-zinc-900/30 flex items-center justify-center">
             {formData.avatar_url ? (
-              <img src={formData.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+              <img
+                src={formData.avatar_url}
+                alt="Avatar"
+                className="w-full h-full object-cover cursor-zoom-in"
+                onClick={() => setShowAvatarPreview(true)}
+              />
             ) : (
               <div className="text-zinc-600 text-center">
                 <ImageIcon size={48} className="mx-auto mb-2 opacity-20" />
                 <p className="text-[10px] uppercase tracking-widest">Brak obrazu</p>
               </div>
             )}
+            {/* Fullscreen lightbox - outside relative container so overlay doesn't block it */}
+            {showAvatarPreview && formData.avatar_url && (
+              <div
+                className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4"
+                onClick={() => setShowAvatarPreview(false)}
+              >
+                <div className="relative max-w-3xl max-h-full" onClick={e => e.stopPropagation()}>
+                  <button
+                    onClick={() => setShowAvatarPreview(false)}
+                    className="absolute -top-10 right-0 text-white/70 hover:text-white text-xs uppercase tracking-widest flex items-center gap-2 transition-colors"
+                  >
+                    <X size={14} /> Zamknij
+                  </button>
+                  <img
+                    src={formData.avatar_url}
+                    alt="Avatar pełny rozmiar"
+                    className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
+                  />
+                </div>
+              </div>
+            )}
             <div className="absolute inset-0 bg-black/60 opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
+              {formData.avatar_url && (
+                <button
+                  onClick={() => setShowAvatarPreview(true)}
+                  className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/80 rounded-lg text-white/70 hover:text-white transition-colors"
+                  title="Podgląd pełny"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+                </button>
+              )}
               <label className="cursor-pointer flex items-center gap-2 px-4 py-2 bg-white text-black text-[10px] font-bold uppercase tracking-widest rounded-lg hover:bg-zinc-200 transition-colors">
                 <Upload size={14} />
                 Wgraj własny
@@ -2678,80 +2718,80 @@ export default function App() {
     fetchData();
   };
 
- const [sidebarOpen, setSidebarOpen] = useState(false);
- 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   return (
     <div className="flex min-h-screen bg-[#050505]">
 
-    {/* Overlay na mobile */}
-    {sidebarOpen && (
-      <div
-        className="fixed inset-0 bg-black/60 z-20 md:hidden"
-        onClick={() => setSidebarOpen(false)}
-      />
-    )}
+      {/* Overlay na mobile */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-20 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-    {/* Hamburger button na mobile */}
-    <button
-      className="fixed top-4 left-4 z-30 md:hidden bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-white"
-      onClick={() => setSidebarOpen(prev => !prev)}
-    >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        {sidebarOpen
-          ? <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>
-          : <><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></>
-        }
-      </svg>
-    </button>
+      {/* Hamburger button na mobile */}
+      <button
+        className="fixed top-4 left-4 z-30 md:hidden bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-white"
+        onClick={() => setSidebarOpen(prev => !prev)}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          {sidebarOpen
+            ? <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>
+            : <><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></>
+          }
+        </svg>
+      </button>
 
-    {/* Sidebar */}
-    <aside className={`
+      {/* Sidebar */}
+      <aside className={`
       fixed md:sticky top-0 h-screen z-30
       w-64 border-r border-zinc-900 p-6 flex flex-col gap-8
       bg-[#050505] transition-transform duration-300
       ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       md:translate-x-0
     `}>
-      <div className="flex flex-col gap-1">
-        <h1 className="bleach-title text-white">Bleach Iowoi</h1>
-        <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-600 font-bold">Chronicles</p>
-      </div>
+        <div className="flex flex-col gap-1">
+          <h1 className="bleach-title text-white">Bleach Iowoi</h1>
+          <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-600 font-bold">Chronicles</p>
+        </div>
 
-      <nav className="flex flex-col gap-2">
-        <SidebarItem
-          icon={User}
-          label="Moja Postać"
-          active={activeTab === 'PC'}
-          onClick={() => { setActiveTab('PC'); setIsEditing(false); setSidebarOpen(false); }}
-        />
-        <SidebarItem
-          icon={Users}
-          label="Spotkani NPC"
-          active={activeTab === 'NPC'}
-          onClick={() => { setActiveTab('NPC'); setIsEditing(false); setSidebarOpen(false); }}
-        />
-        <SidebarItem
-          icon={MessageSquare}
-          label="Przygoda"
-          active={activeTab === 'POSTS'}
-          onClick={() => { setActiveTab('POSTS'); setIsEditing(false); setSidebarOpen(false); }}
-        />
-      </nav>
+        <nav className="flex flex-col gap-2">
+          <SidebarItem
+            icon={User}
+            label="Moja Postać"
+            active={activeTab === 'PC'}
+            onClick={() => { setActiveTab('PC'); setIsEditing(false); setSidebarOpen(false); }}
+          />
+          <SidebarItem
+            icon={Users}
+            label="Spotkani NPC"
+            active={activeTab === 'NPC'}
+            onClick={() => { setActiveTab('NPC'); setIsEditing(false); setSidebarOpen(false); }}
+          />
+          <SidebarItem
+            icon={MessageSquare}
+            label="Przygoda"
+            active={activeTab === 'POSTS'}
+            onClick={() => { setActiveTab('POSTS'); setIsEditing(false); setSidebarOpen(false); }}
+          />
+        </nav>
 
-      <div className="mt-auto pt-6 border-t border-zinc-900">
-        <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-zinc-900/50 border border-zinc-800">
-          <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
-            <Sword size={16} />
-          </div>
-          <div className="overflow-hidden">
-            <p className="text-[10px] uppercase tracking-widest text-zinc-500">Status</p>
-            <p className="text-xs font-bold truncate">Gotowy do walki</p>
+        <div className="mt-auto pt-6 border-t border-zinc-900">
+          <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-zinc-900/50 border border-zinc-800">
+            <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
+              <Sword size={16} />
+            </div>
+            <div className="overflow-hidden">
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Status</p>
+              <p className="text-xs font-bold truncate">Gotowy do walki</p>
+            </div>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
 
-      { /* Main Content */ }
+      { /* Main Content */}
       <main className="flex-1 p-6 md:p-12 max-w-6xl mx-auto pt-16 md:pt-12">
         <AnimatePresence mode="wait">
           {activeTab === 'PC' && (
