@@ -77,9 +77,7 @@ export async function generateMangaPanel(postContent: string, characterDescripti
     model: imageModel,
     contents: { parts: [{ text: prompt }] },
     config: {
-      imageConfig: {
-        aspectRatio: "16:9",
-      },
+      responseModalities: [Modality.TEXT, Modality.IMAGE],
     },
   });
 
