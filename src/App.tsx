@@ -49,10 +49,12 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label:
 
 const SimplifiedNPCForm = ({
   initialCharacter,
+  playerName,
   onSave,
   onCancel,
 }: {
   initialCharacter?: Character;
+  playerName: string;
   onSave: (character: Partial<Character>) => void;
   onCancel: () => void;
 }) => {
@@ -64,18 +66,31 @@ const SimplifiedNPCForm = ({
     if (!gmNote.trim()) return;
     setIsGenerating(true);
     try {
-      const data = await generateSimplifiedNPC(gmNote);
-      setGeneratedNPC({
+      const data = await generateSimplifiedNPC(gmNote, playerName, initialCharacter);
+
+      setGeneratedNPC((prev) => ({
+        ...(prev || {}), // Keep ID and existing fields if updating
         name: data.name,
         profession: data.race_profession,
         appearance: data.appearance,
         personality: data.personality,
         avatar_url: data.avatarUrl,
         type: 'NPC',
-        surname: '', quote: '', gender: 'Nieznana', age: '', weight: '', height: '',
-        history: '', equipment: '', money: '', skills: 'Brak', disadvantages: 'Brak',
-        stats: '', general_stats: '', techniques: 'Brak'
-      });
+        surname: prev?.surname || '',
+        quote: prev?.quote || '',
+        gender: prev?.gender || 'Nieznana',
+        age: prev?.age || '',
+        weight: prev?.weight || '',
+        height: prev?.height || '',
+        history: prev?.history || '',
+        equipment: prev?.equipment || '',
+        money: prev?.money || '',
+        skills: prev?.skills || 'Brak',
+        disadvantages: prev?.disadvantages || 'Brak',
+        stats: prev?.stats || '',
+        general_stats: prev?.general_stats || '',
+        techniques: prev?.techniques || 'Brak'
+      }));
     } catch (e: any) {
       alert("Błąd generowania NPC: " + e.message);
     } finally {
@@ -85,10 +100,14 @@ const SimplifiedNPCForm = ({
 
   return (
     <div className="glass-panel p-8 rounded-3xl space-y-6">
-      <h3 className="text-2xl font-display italic uppercase border-b border-zinc-800 pb-4">Tajemniczy Nieznajomy (Nowy NPC)</h3>
-      <p className="text-sm text-zinc-400">Możesz opisać wygląd/charakter własnymi słowami albo wkleić notatkę od Mistrza Gry. AI automatycznie wyodrębni to, co najważniejsze i zrobi portret.</p>
+      <h3 className="text-2xl font-display italic uppercase border-b border-zinc-800 pb-4">
+        {initialCharacter ? `Aktualizacja: ${initialCharacter.name}` : 'Tajemniczy Nieznajomy (Nowy NPC)'}
+      </h3>
+      <p className="text-sm text-zinc-400">
+        Możesz opisać wygląd/charakter własnymi słowami albo wkleić notatkę od Mistrza Gry. AI automatycznie wyodrębni to, co najważniejsze i {initialCharacter ? 'zaktualizuje informacje o tej postaci.' : 'zrobi portret.'}
+      </p>
 
-      {!generatedNPC ? (
+      {(!generatedNPC || gmNote.length > 0) ? (
         <div className="space-y-4">
           <textarea
             value={gmNote}
@@ -134,14 +153,12 @@ const SimplifiedNPCForm = ({
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-zinc-800">
-              {!initialCharacter && (
-                <button onClick={() => setGeneratedNPC(null)} className="flex items-center gap-1 px-4 py-2 rounded-lg text-xs uppercase tracking-widest text-zinc-400 hover:text-white transition-colors"><Trash2 size={14} /> Wyczyść Ocenę AI</button>
-              )}
+              <button onClick={() => setGeneratedNPC(initialCharacter || null)} className="flex items-center gap-1 px-4 py-2 rounded-lg text-xs uppercase tracking-widest text-zinc-400 hover:text-white transition-colors"><Trash2 size={14} /> Odrzuć Zmiany AI</button>
               {initialCharacter && (
                 <button onClick={onCancel} className="flex items-center gap-1 px-4 py-2 rounded-lg text-xs uppercase tracking-widest text-zinc-400 hover:text-white transition-colors">Anuluj Edycję</button>
               )}
               <button
-                onClick={() => onSave(generatedNPC)}
+                onClick={() => { onSave(generatedNPC!); setGmNote(""); }}
                 className="flex items-center gap-2 px-6 py-2 bg-white text-black font-bold uppercase tracking-widest text-[10px] rounded-lg hover:bg-zinc-200 transition-colors shadow-lg shadow-white/10"
               >
                 <Save size={16} /> Zapisz do Akt
@@ -3155,6 +3172,7 @@ export default function App() {
               {isEditing ? (
                 <SimplifiedNPCForm
                   initialCharacter={selectedCharacter || undefined}
+                  playerName={characters.find(c => c.type === 'PC')?.name || 'Gracz'}
                   onSave={handleSaveCharacter}
                   onCancel={() => { setIsEditing(false); setSelectedCharacter(null); }}
                 />

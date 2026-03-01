@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { Character } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -144,15 +145,23 @@ ${personality || '(not provided)'}`;
   return data.image as string;
 }
 
-export async function generateSimplifiedNPC(gmNote: string) {
+export async function generateSimplifiedNPC(
+  gmNote: string,
+  playerName: string = "Gracz",
+  existingNpc?: Partial<Character> | null
+) {
   // Step 1: Extract basic details from GM Note using Gemini
   const extractPrompt = `You are a Bleach RPG Game Master assistant. Read the GM's note about an NPC and extract their info into a structured JSON format.
 
+CRITICAL CONTEXT:
+- The player character's name is "${playerName}". DO NOT create an NPC profile for "${playerName}". Focus ONLY on NEW or OTHER characters mentioned in the text.
+${existingNpc ? `- We are UPDATING an existing NPC named "${existingNpc.name}". Keep their core identity but expand their personality/history based on what's new in the text.` : ''}
+
 RULES:
-- Extract Name (invent one fitting Bleach if missing, e.g. Japanese name or Arrancar Spanish-sounding name).
-- Extract Age/Race/Profession into a brief 1-2 word string (e.g. "Shinigami", "Unknown Arrancar", "Academy Student").
+- Extract Name: ${existingNpc ? `Use exactly "${existingNpc.name}"` : 'Invent one fitting Bleach if missing (e.g. Japanese name or Arrancar Spanish-sounding name).'}.
+- Extract Age/Race/Profession into a brief 1-2 word string.
 - Extract/Infer Appearance: Write a 1-sentence physical description (hair, eyes, clothing, build) suitable for image generation context.
-- Extract Personality/Relationship: Write a 2-3 sentence summary of how they act, their vibe, and their relationship/history with the player based on the note.
+- Extract Personality/Relationship: Write a 2-3 sentence summary of how they act, their vibe, and their relationship/history with "${playerName}" based on the note.
 - ALWAYS return ONLY valid JSON matching this structure:
 {
   "name": "string",
@@ -187,19 +196,24 @@ GM Note: "${gmNote}"`;
   }
 
   // Step 2: Use the existing avatar generator to create their portrait
-  // We pass the GM-derived appearance and personality directly
-  const avatarUrl = await generateCharacterAvatar(
-    npcData.appearance || "Tajemnicza postać z zaświatów",
-    undefined, // no reference image
-    npcData.race_profession,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    npcData.personality,
-    npcData.name
-  );
+  // We ONLY generate a new avatar if it's a completely new NPC. 
+  // If we are updating an existing one, we skip image generation to save quota and keep their face consistent.
+  let avatarUrl = existingNpc?.avatar_url || "";
+
+  if (!existingNpc) {
+    avatarUrl = await generateCharacterAvatar(
+      npcData.appearance || "Tajemnicza postać z zaświatów",
+      undefined, // no reference image
+      npcData.race_profession,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      npcData.personality,
+      npcData.name
+    );
+  }
 
   return {
     ...npcData,
