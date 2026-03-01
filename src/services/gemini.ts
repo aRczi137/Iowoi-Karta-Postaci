@@ -3,7 +3,7 @@ import { Character } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-export const geminiModel = "gemini-flash-latest";
+export const geminiModel = "gemini-2.5-flash";
 export const imageModel = "gemini-3.1-flash-image-preview";
 
 export async function generateCharacterAvatar(
