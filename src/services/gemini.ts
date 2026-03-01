@@ -2,8 +2,8 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-export const geminiModel = "gemini-3-flash-preview";
-export const imageModel = "gemini-2.5-flash-image";
+export const geminiModel = "gemini-2.5-flash";
+export const imageModel = "gemini-2.0-flash-exp";
 
 export async function generateCharacterAvatar(
   description: string,
@@ -54,9 +54,7 @@ export async function generateCharacterAvatar(
     model: imageModel,
     contents: { parts },
     config: {
-      imageConfig: {
-        aspectRatio: "1:1",
-      },
+      responseModalities: [Modality.TEXT, Modality.IMAGE],
     },
   });
 
@@ -79,9 +77,7 @@ export async function generateMangaPanel(postContent: string, characterDescripti
     model: imageModel,
     contents: { parts: [{ text: prompt }] },
     config: {
-      imageConfig: {
-        aspectRatio: "16:9",
-      },
+      responseModalities: [Modality.TEXT, Modality.IMAGE],
     },
   });
 
