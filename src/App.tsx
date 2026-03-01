@@ -1822,7 +1822,7 @@ const CharacterForm = ({ character, onSave, onCancel, isNPC = false }: { charact
                 <p className="text-[10px] uppercase tracking-widest">Brak obrazu</p>
               </div>
             )}
-            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
+            <div className="absolute inset-0 bg-black/60 opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
               <label className="cursor-pointer flex items-center gap-2 px-4 py-2 bg-white text-black text-[10px] font-bold uppercase tracking-widest rounded-lg hover:bg-zinc-200 transition-colors">
                 <Upload size={14} />
                 Wgraj własny
