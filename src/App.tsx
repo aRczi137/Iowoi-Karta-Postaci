@@ -2678,51 +2678,82 @@ export default function App() {
     fetchData();
   };
 
+ const [sidebarOpen, setSidebarOpen] = useState(false);
+ 
   return (
+    return (
     <div className="flex min-h-screen bg-[#050505]">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-zinc-900 p-6 flex flex-col gap-8 sticky top-0 h-screen">
-        <div className="flex flex-col gap-1">
-          <h1 className="bleach-title text-white">Bleach Iowoi</h1>
-          <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-600 font-bold">Chronicles</p>
-        </div>
 
-        <nav className="flex flex-col gap-2">
-          <SidebarItem
-            icon={User}
-            label="Moja Postać"
-            active={activeTab === 'PC'}
-            onClick={() => { setActiveTab('PC'); setIsEditing(false); }}
-          />
-          <SidebarItem
-            icon={Users}
-            label="Spotkani NPC"
-            active={activeTab === 'NPC'}
-            onClick={() => { setActiveTab('NPC'); setIsEditing(false); }}
-          />
-          <SidebarItem
-            icon={MessageSquare}
-            label="Przygoda"
-            active={activeTab === 'POSTS'}
-            onClick={() => { setActiveTab('POSTS'); setIsEditing(false); }}
-          />
-        </nav>
+    {/* Overlay na mobile */}
+    {sidebarOpen && (
+      <div
+        className="fixed inset-0 bg-black/60 z-20 md:hidden"
+        onClick={() => setSidebarOpen(false)}
+      />
+    )}
 
-        <div className="mt-auto pt-6 border-t border-zinc-900">
-          <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-zinc-900/50 border border-zinc-800">
-            <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
-              <Sword size={16} />
-            </div>
-            <div className="overflow-hidden">
-              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Status</p>
-              <p className="text-xs font-bold truncate">Gotowy do walki</p>
-            </div>
+    {/* Hamburger button na mobile */}
+    <button
+      className="fixed top-4 left-4 z-30 md:hidden bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-white"
+      onClick={() => setSidebarOpen(prev => !prev)}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        {sidebarOpen
+          ? <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>
+          : <><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></>
+        }
+      </svg>
+    </button>
+
+    {/* Sidebar */}
+    <aside className={`
+      fixed md:sticky top-0 h-screen z-30
+      w-64 border-r border-zinc-900 p-6 flex flex-col gap-8
+      bg-[#050505] transition-transform duration-300
+      ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+      md:translate-x-0
+    `}>
+      <div className="flex flex-col gap-1">
+        <h1 className="bleach-title text-white">Bleach Iowoi</h1>
+        <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-600 font-bold">Chronicles</p>
+      </div>
+
+      <nav className="flex flex-col gap-2">
+        <SidebarItem
+          icon={User}
+          label="Moja Postać"
+          active={activeTab === 'PC'}
+          onClick={() => { setActiveTab('PC'); setIsEditing(false); setSidebarOpen(false); }}
+        />
+        <SidebarItem
+          icon={Users}
+          label="Spotkani NPC"
+          active={activeTab === 'NPC'}
+          onClick={() => { setActiveTab('NPC'); setIsEditing(false); setSidebarOpen(false); }}
+        />
+        <SidebarItem
+          icon={MessageSquare}
+          label="Przygoda"
+          active={activeTab === 'POSTS'}
+          onClick={() => { setActiveTab('POSTS'); setIsEditing(false); setSidebarOpen(false); }}
+        />
+      </nav>
+
+      <div className="mt-auto pt-6 border-t border-zinc-900">
+        <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-zinc-900/50 border border-zinc-800">
+          <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
+            <Sword size={16} />
+          </div>
+          <div className="overflow-hidden">
+            <p className="text-[10px] uppercase tracking-widest text-zinc-500">Status</p>
+            <p className="text-xs font-bold truncate">Gotowy do walki</p>
           </div>
         </div>
-      </aside>
+      </div>
+    </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 p-12 max-w-6xl mx-auto">
+      { /* Main Content */ }
+      <main className="flex-1 p-6 md:p-12 max-w-6xl mx-auto pt-16 md:pt-12">
         <AnimatePresence mode="wait">
           {activeTab === 'PC' && (
             <motion.div
