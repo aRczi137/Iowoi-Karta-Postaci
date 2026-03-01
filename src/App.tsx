@@ -2681,7 +2681,6 @@ export default function App() {
  const [sidebarOpen, setSidebarOpen] = useState(false);
  
   return (
-    return (
     <div className="flex min-h-screen bg-[#050505]">
 
     {/* Overlay na mobile */}
