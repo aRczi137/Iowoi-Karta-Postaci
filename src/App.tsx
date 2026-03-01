@@ -2711,6 +2711,51 @@ export default function App() {
   const [isGeneratingPost, setIsGeneratingPost] = useState(false);
   const [mangaPanel, setMangaPanel] = useState('');
   const [isGeneratingManga, setIsGeneratingManga] = useState(false);
+  const [generatingAvatarForId, setGeneratingAvatarForId] = useState<number | null>(null);
+
+  const handleGenerateNPCAvatar = async (char: Character) => {
+    setGeneratingAvatarForId(char.id);
+    try {
+      const race = Object.keys(STARTING_RANKS).find(key => char.profession?.includes(key)) || '';
+      const additionalImages = char.appearance_images?.split('|||').filter(Boolean) || [];
+
+      const url = await generateCharacterAvatar(
+        char.appearance || "Tajemnicza postać z zaświatów",
+        undefined,
+        race,
+        char.profession,
+        char.age,
+        char.weight,
+        char.height,
+        additionalImages,
+        char.personality,
+        char.name,
+        char.gender,
+      );
+
+      if (url) {
+        // Save the generated avatar to the character
+        const updatedChar = { ...char, avatar_url: url };
+        await fetch(`/api/characters/${char.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedChar)
+        });
+
+        // Update local state smoothly
+        setCharacters(prev => prev.map(c => c.id === char.id ? updatedChar : c));
+      }
+    } catch (e: any) {
+      console.error("Error generating NPC avatar:", e);
+      if (e.message && (e.message.includes("quota") || e.message.includes("429") || e.message.includes("RESOURCE_EXHAUSTED"))) {
+        alert("Wyczerpano próbki/darmowy limit zapytań do AI. Spróbuj powtórzyć generowanie obrazu później.");
+      } else {
+        alert(`Błąd generowania awatara: ${e.message || "Sprawdź konsolę po więcej szczegółów"}`);
+      }
+    } finally {
+      setGeneratingAvatarForId(null);
+    }
+  };
 
   useEffect(() => {
     fetchData();

@@ -196,24 +196,9 @@ GM Note: "${gmNote}"`;
   }
 
   // Step 2: Use the existing avatar generator to create their portrait
-  // We ONLY generate a new avatar if it's a completely new NPC. 
-  // If we are updating an existing one, we skip image generation to save quota and keep their face consistent.
+  // The user requested that avatar generation is NOT automatic.
+  // We skip image generation here entirely; it will be done via a button in the UI.
   let avatarUrl = existingNpc?.avatar_url || "";
-
-  if (!existingNpc) {
-    avatarUrl = await generateCharacterAvatar(
-      npcData.appearance || "Tajemnicza postać z zaświatów",
-      undefined, // no reference image
-      npcData.race_profession,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      npcData.personality,
-      npcData.name
-    );
-  }
 
   return {
     ...npcData,
