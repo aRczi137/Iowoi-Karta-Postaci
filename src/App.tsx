@@ -2924,7 +2924,7 @@ export default function App() {
                                       {log.comment && <p className="text-zinc-400 italic pr-6 truncate" title={log.comment}>"{log.comment}"</p>}
                                       <button
                                         onClick={() => undoStatHistory(char.id, log.id)}
-                                        className="absolute right-2 top-2 text-zinc-600 hover:text-red-400 opacity-40 hover:opacity-100 hover:text-red-400 transition-opacity"
+                                        className="absolute right-2 top-2 text-red-800 hover:text-red-400 opacity-40 hover:opacity-100 hover:text-red-400 transition-opacity"
                                         title="Cofnij tę zmianę (odejmie punkty i zaktualizuje HP/PR)"
                                       >
                                         <Trash2 size={12} />
