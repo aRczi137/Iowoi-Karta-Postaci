@@ -54,9 +54,7 @@ export async function generateCharacterAvatar(
     model: imageModel,
     contents: { parts },
     config: {
-      imageConfig: {
-        aspectRatio: "1:1",
-      },
+      responseModalities: [Modality.TEXT, Modality.IMAGE],
     },
   });
 
