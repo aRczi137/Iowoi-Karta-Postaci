@@ -3,7 +3,7 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export const geminiModel = "gemini-3-flash-preview";
-export const imageModel = "gemini-2.0-flash-exp-image-generation";
+export const imageModel = "gemini-3.1-flash-image-preview";
 
 export async function generateCharacterAvatar(
   description: string,
