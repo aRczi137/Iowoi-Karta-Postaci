@@ -3046,6 +3046,41 @@ function SessionBuilder({
   );
 }
 
+// ─── SESSION ITEM ─────────────────────────────────────────────────────────────
+
+function SessionItem({ s, onDelete }: { s: Session; onDelete: (id: number) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden">
+      <div
+        className="flex items-start gap-3 p-3 cursor-pointer"
+        onClick={() => setExpanded(prev => !prev)}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-xs font-bold text-zinc-300 truncate">{s.title || 'Sesja bez tytułu'}</p>
+            <span className="text-[10px] text-zinc-600 shrink-0">{new Date(s.created_at).toLocaleDateString('pl-PL')}</span>
+          </div>
+          {s.summary ? (
+            <p className={`text-[10px] text-zinc-500 leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>{s.summary}</p>
+          ) : (
+            <p className="text-[10px] text-zinc-700 italic">Brak podsumowania</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <ChevronDown size={13} className={`text-zinc-600 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(s.id); }}
+            className="text-zinc-600 hover:text-red-500 transition-all"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── GM ASSISTANT TAB ────────────────────────────────────────────────────────
 
 function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; onNPCSaved: () => void }) {
@@ -3259,25 +3294,7 @@ function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; o
             ) : (
               <div className="space-y-2">
                 {sessions.map(s => (
-                  <div key={s.id} className="flex items-start gap-3 p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl group">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="text-xs font-bold text-zinc-300 truncate">{s.title || 'Sesja bez tytułu'}</p>
-                        <span className="text-[10px] text-zinc-600 shrink-0">{new Date(s.created_at).toLocaleDateString('pl-PL')}</span>
-                      </div>
-                      {s.summary ? (
-                        <p className="text-[10px] text-zinc-500 line-clamp-2 leading-relaxed">{s.summary}</p>
-                      ) : (
-                        <p className="text-[10px] text-zinc-700 italic">Brak podsumowania</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => handleDeleteSession(s.id)}
-                      className="shrink-0 text-zinc-700 hover:text-red-500 transition-all"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
+                  <SessionItem key={s.id} s={s} onDelete={handleDeleteSession} />
                 ))}
               </div>
             )}
