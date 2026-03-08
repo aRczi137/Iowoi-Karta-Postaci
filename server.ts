@@ -48,6 +48,34 @@ db.exec(`
     manga_panel_url TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,
+    raw_text TEXT NOT NULL,
+    summary TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    notes TEXT,
+    avatar_url TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS encountered_players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    character_name TEXT,
+    description TEXT,
+    relationship TEXT,
+    notes TEXT,
+    avatar_url TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 async function startServer() {
@@ -302,6 +330,38 @@ async function startServer() {
     res.json({ id: result.lastInsertRowid });
   });
 
+  // Sessions API
+  app.get("/api/sessions", (req, res) => {
+    const sessions = db.prepare("SELECT id, title, summary, created_at, substr(raw_text, 1, 200) as preview FROM sessions ORDER BY created_at DESC").all();
+    res.json(sessions);
+  });
+
+  app.get("/api/sessions/context", (req, res) => {
+    // Returns last 10 summaries + last 3 full raw_texts for style context
+    const summaries = db.prepare("SELECT id, title, summary, created_at FROM sessions WHERE summary IS NOT NULL ORDER BY created_at DESC LIMIT 10").all();
+    const recentFull = db.prepare("SELECT id, title, raw_text, created_at FROM sessions ORDER BY created_at DESC LIMIT 3").all();
+    res.json({ summaries, recentFull });
+  });
+
+  app.post("/api/sessions", (req, res) => {
+    const { title, raw_text } = req.body;
+    if (!raw_text) return res.status(400).json({ error: "raw_text is required" });
+    const stmt = db.prepare("INSERT INTO sessions (title, raw_text) VALUES (?, ?)");
+    const result = stmt.run(title || null, raw_text);
+    res.json({ id: result.lastInsertRowid });
+  });
+
+  app.put("/api/sessions/:id/summary", (req, res) => {
+    const { summary } = req.body;
+    db.prepare("UPDATE sessions SET summary = ? WHERE id = ?").run(summary, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/sessions/:id", (req, res) => {
+    db.prepare("DELETE FROM sessions WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
   // Proxy for image generation via Hugging Face Inference API
   app.post("/api/generate-avatar", async (req: any, res: any) => {
     const { prompt, width = 512, height = 512 } = req.body;
@@ -408,6 +468,60 @@ async function startServer() {
     }
 
     res.status(500).json({ error: "Generowanie awatara nie powiodło się. Sprawdź logi serwera." });
+  });
+
+  // ── LOCATIONS ──────────────────────────────────────────────────────────────
+  app.get("/api/locations", (req, res) => {
+    const rows = db.prepare("SELECT * FROM locations ORDER BY created_at DESC").all();
+    res.json(rows);
+  });
+
+  app.post("/api/locations", (req, res) => {
+    const { name, description, notes, avatar_url } = req.body;
+    const result = db.prepare(
+      "INSERT INTO locations (name, description, notes, avatar_url) VALUES (?, ?, ?, ?)"
+    ).run(name, description || "", notes || "", avatar_url || "");
+    res.json({ id: result.lastInsertRowid });
+  });
+
+  app.put("/api/locations/:id", (req, res) => {
+    const { name, description, notes, avatar_url } = req.body;
+    db.prepare(
+      "UPDATE locations SET name=?, description=?, notes=?, avatar_url=? WHERE id=?"
+    ).run(name, description || "", notes || "", avatar_url || "", req.params.id);
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/locations/:id", (req, res) => {
+    db.prepare("DELETE FROM locations WHERE id=?").run(req.params.id);
+    res.json({ ok: true });
+  });
+
+  // ── ENCOUNTERED PLAYERS ────────────────────────────────────────────────────
+  app.get("/api/encountered-players", (req, res) => {
+    const rows = db.prepare("SELECT * FROM encountered_players ORDER BY created_at DESC").all();
+    res.json(rows);
+  });
+
+  app.post("/api/encountered-players", (req, res) => {
+    const { name, character_name, description, relationship, notes, avatar_url } = req.body;
+    const result = db.prepare(
+      "INSERT INTO encountered_players (name, character_name, description, relationship, notes, avatar_url) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(name, character_name || "", description || "", relationship || "", notes || "", avatar_url || "");
+    res.json({ id: result.lastInsertRowid });
+  });
+
+  app.put("/api/encountered-players/:id", (req, res) => {
+    const { name, character_name, description, relationship, notes, avatar_url } = req.body;
+    db.prepare(
+      "UPDATE encountered_players SET name=?, character_name=?, description=?, relationship=?, notes=?, avatar_url=? WHERE id=?"
+    ).run(name, character_name || "", description || "", relationship || "", notes || "", avatar_url || "", req.params.id);
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/encountered-players/:id", (req, res) => {
+    db.prepare("DELETE FROM encountered_players WHERE id=?").run(req.params.id);
+    res.json({ ok: true });
   });
 
   // Vite middleware for development

@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { Character } from '../types';
+import { Character, NPCDetectionResult, Session } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -233,4 +233,173 @@ export async function getPostAssistance(gmPost: string, characterInfo: string, u
   });
 
   return response.text;
+}
+
+// ─── GM ASSISTANT MODULE ────────────────────────────────────────────────────
+
+/**
+ * Summarizes a raw RPG session text into a concise Polish summary.
+ * Used to build a "style context" for future response generation.
+ */
+export async function summarizeSession(rawText: string): Promise<string> {
+  const response = await ai.models.generateContent({
+    model: geminiModel,
+    contents: `Jesteś asystentem RPG. Poniżej znajduje się surowy tekst sesji RPG w świecie Bleach.
+Napisz po polsku zwięzłe podsumowanie tej sesji (około 200-300 słów). Uwzględnij:
+- Co się wydarzyło fabularnie
+- Jakie NPC się pojawiły (imię + krótki opis)
+- Jakie były kluczowe momenty akcji lub dialogów
+- Jakie decyzje lub zmiany zaszły u postaci gracza
+
+Nie dodawaj wstępów ani komentarzy – pisz bezpośrednio streszczenie.
+
+Tekst sesji:
+---
+${rawText}
+---`,
+  });
+
+  return response.text?.trim() || "Nie udało się wygenerować podsumowania.";
+}
+
+/**
+ * Generates a BBCode-formatted player response to a GM post.
+ * Uses session history for style learning and character card for context.
+ */
+export async function generatePlayerResponse(params: {
+  gmPost: string;
+  character: Character;
+  sessionSummaries: { title: string; summary: string; created_at: string }[];
+  recentPosts: { raw_text: string }[];
+  additionalInstructions?: string;
+}): Promise<string> {
+  const { gmPost, character, sessionSummaries, recentPosts, additionalInstructions } = params;
+
+  const charContext = [
+    `Imię: ${character.name} ${character.surname || ''}`.trim(),
+    character.profession && `Rasa/Ranga/Profesja: ${character.profession}`,
+    character.personality && `Osobowość: ${character.personality}`,
+    character.techniques && `Techniki/Zdolności: ${character.techniques}`,
+    character.history && `Historia: ${character.history.slice(0, 400)}`,
+  ].filter(Boolean).join('\n');
+
+  const summariesContext = sessionSummaries.length > 0
+    ? `\n\n## Podsumowania poprzednich sesji (od najnowszej):\n` +
+    sessionSummaries.map((s, i) => `### Sesja ${i + 1}: ${s.title || 'Bez tytułu'}\n${s.summary}`).join('\n\n')
+    : '';
+
+  const styleContext = recentPosts.length > 0
+    ? `\n\n## Przykłady stylu pisania gracza (ostatnie posty):\n` +
+    recentPosts.map((p, i) => `### Post ${i + 1}:\n${p.raw_text.slice(0, 600)}`).join('\n\n')
+    : '';
+
+  const instructionsBlock = additionalInstructions
+    ? `\n\n## Dodatkowe wskazówki od gracza:\n${additionalInstructions}`
+    : '';
+
+  const prompt = `Jesteś asystentem gracza w forum RPG opartym na mandze Bleach. Twoim zadaniem jest napisanie odpowiedzi postaci gracza na post Mistrza Gry.
+
+## ZASADY FORMATOWANIA BBCode (KRYTYCZNE):
+- Kiedy postać MÓWI coś na głos: [b]- Tekst wypowiedzi -[/b] powiedział/a ${character.name}
+  Przykład: [b]- No serio mówię Ci stary! -[/b] powiedział ${character.name} z rozbawieniem.
+- Kiedy postać MYŚLI lub ma monolog wewnętrzny: [i]*** Treść myśli ***[/i] pomyślał/a ${character.name}
+  Przykład: [i]*** Nie no, tego chyba nie mogę tak zostawić! ***[/i] przemknęło przez głowę ${character.name}.
+- Narracja (akcje, opisy, otoczenie): zwykły tekst bez BBCode.
+- NIE UŻYWAJ żadnych innych tagów BBCode.
+
+## Karta postaci gracza:
+${charContext}
+${summariesContext}
+${styleContext}
+${instructionsBlock}
+
+## Post Mistrza Gry (na który odpowiadasz):
+---
+${gmPost}
+---
+
+Napisz teraz odpowiedź gracza po polsku. Naśladuj styl pisania gracza z przykładów. Odpowiedź powinna być atmosferyczna, dramatyczna i zgodna z klimatem Bleach. Zacznij od razu od treści posta.`;
+
+  const response = await ai.models.generateContent({
+    model: geminiModel,
+    contents: prompt,
+  });
+
+  return response.text?.trim() || "";
+}
+
+/**
+ * Extracts new or updated NPCs from a GM post, comparing against known NPCs.
+ */
+export async function extractNPCsFromGMPost(params: {
+  gmPost: string;
+  knownNPCs: Pick<Character, 'id' | 'name' | 'appearance' | 'personality'>[];
+  playerName: string;
+}): Promise<NPCDetectionResult> {
+  const { gmPost, knownNPCs, playerName } = params;
+
+  const knownNPCsJson = JSON.stringify(
+    knownNPCs.map(n => ({ id: n.id, name: n.name, appearance: n.appearance || '', personality: n.personality || '' })),
+    null, 2
+  );
+
+  const prompt = `Jesteś asystentem RPG analizującym post Mistrza Gry w celu wykrycia NPC.
+
+INSTRUKCJE:
+1. Przeczytaj post MG poniżej.
+2. Zidentyfikuj wszystkie POSTACIE, które NIE są postacią gracza (${playerName}).
+3. Porównaj z listą ZNANYCH NPC.
+4. Dla każdego nowego NPC (nie ma na liście znanych): dodaj do "new_npcs".
+5. Dla każdego już ZNANYCH NPC, jeśli post zawiera NOWE informacje (nowe fakty, zmiana osobowości, nowe zdarzenia): dodaj do "updated_npcs" z polem "changes" zawierającym TYLKO zmienione pola i "reason" wyjaśniający po polsku co się zmieniło.
+6. Jeśli żaden NPC się nie pojawia lub brak nowych informacji – zwróć puste tablice.
+7. NIE twórz NPC dla postaci gracza (${playerName}).
+
+ZNANI NPC:
+${knownNPCsJson}
+
+POST MG:
+---
+${gmPost}
+---
+
+Odpowiedz WYŁĄCZNIE poprawnym JSON w formacie:
+{
+  "new_npcs": [
+    {
+      "name": "string",
+      "race_profession": "string (np. 'Shinigami, kapitan' lub 'Hollow')",
+      "appearance": "string (1-2 zdania o wyglądzie)",
+      "personality": "string (2-3 zdania o osobowości i relacji z graczem)"
+    }
+  ],
+  "updated_npcs": [
+    {
+      "id": number,
+      "name": "string",
+      "changes": {
+        "appearance": "string (opcjonalne, tylko jeśli się zmieniło)",
+        "personality": "string (opcjonalne, tylko jeśli się zmieniło)"
+      },
+      "reason": "string (po polsku: co nowego wiemy o tej postaci)"
+    }
+  ]
+}`;
+
+  const response = await ai.models.generateContent({
+    model: geminiModel,
+    contents: prompt,
+    config: { responseMimeType: "application/json" },
+  });
+
+  try {
+    const raw = response.text?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+    return {
+      new_npcs: Array.isArray(parsed.new_npcs) ? parsed.new_npcs : [],
+      updated_npcs: Array.isArray(parsed.updated_npcs) ? parsed.updated_npcs : [],
+    };
+  } catch (e) {
+    console.error("[NPC Extract] Failed to parse JSON:", e);
+    return { new_npcs: [], updated_npcs: [] };
+  }
 }

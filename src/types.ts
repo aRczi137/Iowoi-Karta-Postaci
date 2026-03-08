@@ -42,3 +42,51 @@ export interface Post {
   manga_panel_url: string;
   created_at: string;
 }
+
+export interface Session {
+  id: number;
+  title: string;
+  raw_text?: string;
+  summary: string;
+  preview?: string;
+  created_at: string;
+}
+
+export interface DetectedNPC {
+  name: string;
+  race_profession: string;
+  appearance: string;
+  personality: string;
+}
+
+export interface NPCUpdate {
+  id: number;
+  name: string;
+  changes: Partial<Character>;
+  reason: string;
+}
+
+export interface NPCDetectionResult {
+  new_npcs: DetectedNPC[];
+  updated_npcs: NPCUpdate[];
+}
+
+export interface Location {
+  id: number;
+  name: string;
+  description: string;
+  notes: string;
+  avatar_url: string;
+  created_at: string;
+}
+
+export interface EncounteredPlayer {
+  id: number;
+  name: string;
+  character_name: string;
+  description: string;
+  relationship: string;
+  notes: string;
+  avatar_url: string;
+  created_at: string;
+}

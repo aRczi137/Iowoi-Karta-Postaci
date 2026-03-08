@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   User,
@@ -23,10 +23,20 @@ import {
   FileText,
   ArrowUpCircle,
   Clock,
-  X
+  X,
+  Bot,
+  BookOpen,
+  RefreshCw,
+  Check,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  MapPin,
+  Users2,
+  Edit2
 } from 'lucide-react';
-import { Character, Post, StatHistory } from './types';
-import { generateCharacterAvatar, generateMangaPanel, getPostAssistance, generateSimplifiedNPC } from './services/gemini';
+import { Character, Post, StatHistory, Session, NPCDetectionResult, DetectedNPC, NPCUpdate, Location, EncounteredPlayer } from './types';
+import { generateCharacterAvatar, generateMangaPanel, getPostAssistance, generateSimplifiedNPC, summarizeSession, generatePlayerResponse, extractNPCsFromGMPost } from './services/gemini';
 import { cn } from './utils';
 import ReactMarkdown from 'react-markdown';
 
@@ -2688,13 +2698,1115 @@ const CharacterForm = ({ character, onSave, onCancel, isNPC = false }: { charact
     </div>
   );
 };
+// ─── SESSION BUILDER ─────────────────────────────────────────────────────────
+
+type SNodeType = 'location' | 'gm' | 'player' | 'other_player';
+
+interface SNode {
+  id: string;
+  type: SNodeType;
+  // location fields
+  locationName?: string;
+  locationDescription?: string;
+  // player / other_player fields
+  playerName?: string;
+  // shared content
+  content: string;
+}
+
+function makeId() { return Math.random().toString(36).slice(2, 8); }
+
+function nodesToText(nodes: SNode[], pcName: string): string {
+  return nodes.map(n => {
+    if (n.type === 'location') {
+      return `=== MIEJSCE: ${n.locationName || 'Nieznane'} ===\n${n.locationDescription || ''}`;
+    }
+    if (n.type === 'gm') return `[MG]: ${n.content}`;
+    if (n.type === 'player') return `[${pcName}]: ${n.content}`;
+    if (n.type === 'other_player') return `[${n.playerName || 'Inny gracz'}]: ${n.content}`;
+    return '';
+  }).join('\n\n');
+}
+
+const NODE_COLORS: Record<SNodeType, string> = {
+  location: 'border-amber-700/60 bg-amber-950/20',
+  gm: 'border-blue-700/60 bg-blue-950/20',
+  player: 'border-emerald-700/60 bg-emerald-950/20',
+  other_player: 'border-violet-700/60 bg-violet-950/20',
+};
+
+const NODE_LABELS: Record<SNodeType, string> = {
+  location: '📍 Miejsce',
+  gm: '🎭 Post MG',
+  player: '⚔️ Moja odpowiedź',
+  other_player: '👤 Inny gracz',
+};
+
+const NODE_DOT: Record<SNodeType, string> = {
+  location: 'bg-amber-500',
+  gm: 'bg-blue-500',
+  player: 'bg-emerald-500',
+  other_player: 'bg-violet-500',
+};
+
+function SessionBuilder({
+  pcName,
+  onSave,
+  onCancel,
+  isSaving,
+}: {
+  pcName: string;
+  onSave: (text: string, title: string) => void;
+  onCancel: () => void;
+  isSaving: boolean;
+}) {
+  const [title, setTitle] = useState('');
+  const [nodes, setNodes] = useState<SNode[]>([
+    { id: makeId(), type: 'location', locationName: '', locationDescription: '', content: '' },
+    { id: makeId(), type: 'gm', content: '' },
+  ]);
+
+  // Tracked active players in the session (name list)
+  const [activePlayers, setActivePlayers] = useState<string[]>([]);
+  // Inline "add player" input state
+  const [addingPlayer, setAddingPlayer] = useState(false);
+  const [newPlayerName, setNewPlayerName] = useState('');
+
+  const update = (id: string, patch: Partial<SNode>) =>
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, ...patch } : n));
+
+  const removeNode = (id: string) =>
+    setNodes(prev => prev.filter(n => n.id !== id));
+
+  const insertAfter = (idx: number, newNode: SNode) => {
+    setNodes(prev => {
+      const next = [...prev];
+      next.splice(idx + 1, 0, newNode);
+      return next;
+    });
+  };
+
+  const handleConfirmAddPlayer = (idx: number) => {
+    const name = newPlayerName.trim();
+    if (!name) return;
+    if (!activePlayers.includes(name)) {
+      setActivePlayers(prev => [...prev, name]);
+    }
+    // Insert first post node for that player
+    insertAfter(idx, { id: makeId(), type: 'other_player', playerName: name, content: '' });
+    setNewPlayerName('');
+    setAddingPlayer(false);
+  };
+
+  const removePlayer = (name: string) => {
+    setActivePlayers(prev => prev.filter(p => p !== name));
+  };
+
+  // What actions are available after the last node
+  const getActions = (idx: number) => {
+    const node = nodes[idx];
+    const isLast = idx === nodes.length - 1;
+    if (!isLast) return null;
+
+    const actions: { label: string; icon: string; onClick: () => void; variant?: string }[] = [];
+
+    // Player's own response — always available
+    actions.push({
+      label: 'Moja odpowiedź',
+      icon: '⚔️',
+      onClick: () => insertAfter(idx, { id: makeId(), type: 'player', content: '' }),
+    });
+    // GM response — available when last node isn't already a gm post
+    if (node.type !== 'gm') {
+      actions.push({
+        label: 'Odpowiedź MG',
+        icon: '🎭',
+        onClick: () => insertAfter(idx, { id: makeId(), type: 'gm', content: '' }),
+      });
+    }
+    // Per-active-player buttons
+    activePlayers.forEach(name => {
+      actions.push({
+        label: `Odpowiedź ${name}`,
+        icon: '👤',
+        onClick: () => insertAfter(idx, { id: makeId(), type: 'other_player', playerName: name, content: '' }),
+        variant: 'violet',
+      });
+    });
+
+    return actions;
+  };
+
+  const canSave = nodes.some(n => n.content.trim() || (n.type === 'location' && n.locationName?.trim()));
+
+  const handleSave = () => {
+    const text = nodesToText(nodes, pcName || 'Gracz');
+    onSave(text, title);
+  };
+
+  const ta = (extra = '') =>
+    `w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-zinc-600 transition-colors resize-none ${extra}`;
+
+  return (
+    <div className="space-y-3">
+      {/* Title */}
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-zinc-600"
+        placeholder="Tytuł sesji (opcjonalnie)"
+      />
+
+      {/* Tree */}
+      <div className="relative pl-6">
+        {/* Vertical line */}
+        <div className="absolute left-2 top-3 bottom-3 w-0.5 bg-zinc-800 rounded" />
+
+        <div className="space-y-3">
+          {nodes.map((node, idx) => {
+            const actions = getActions(idx);
+            return (
+              <div key={node.id} className="relative">
+                {/* Dot */}
+                <div className={`absolute -left-5 top-3.5 w-2.5 h-2.5 rounded-full border-2 border-zinc-950 ${NODE_DOT[node.type]}`} />
+
+                {/* Card */}
+                <div className={`border rounded-xl p-3 space-y-2 ${NODE_COLORS[node.type]}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] uppercase tracking-widest text-zinc-400 font-bold">
+                      {NODE_LABELS[node.type]}
+                    </span>
+                    {/* Don't allow deleting if only 1 node left or first gm node */}
+                    {nodes.length > 1 && !(idx === 0 && node.type === 'location') && (
+                      <button
+                        onClick={() => removeNode(node.id)}
+                        className="text-zinc-700 hover:text-red-500 transition-colors"
+                        title="Usuń"
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Location fields */}
+                  {node.type === 'location' && (
+                    <>
+                      <input
+                        value={node.locationName || ''}
+                        onChange={e => update(node.id, { locationName: e.target.value })}
+                        className={ta()}
+                        placeholder="Nazwa miejsca (np. Akademia Shinigami)"
+                      />
+                      <textarea
+                        value={node.locationDescription || ''}
+                        onChange={e => update(node.id, { locationDescription: e.target.value })}
+                        className={ta('h-12')}
+                        placeholder="Opis miejsca (opcjonalnie)"
+                      />
+                    </>
+                  )}
+
+                  {/* Other player name — show from activePlayers, still editable */}
+                  {node.type === 'other_player' && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] text-violet-400/70">👤</span>
+                      <span className="text-xs text-violet-300 font-medium">{node.playerName || 'Nieznany gracz'}</span>
+                    </div>
+                  )}
+
+                  {/* Content textarea (all except pure location) */}
+                  {node.type !== 'location' && (
+                    <textarea
+                      value={node.content}
+                      onChange={e => update(node.id, { content: e.target.value })}
+                      className={ta('h-24')}
+                      placeholder={
+                        node.type === 'gm' ? 'Treść posta Mistrza Gry...' :
+                          node.type === 'player' ? `Twoja odpowiedź jako ${pcName || 'Gracz'}...` :
+                            `Odpowiedź gracza ${node.playerName || ''}...`
+                      }
+                    />
+                  )}
+
+                  {/* Action buttons after last node */}
+                  {actions && (
+                    <div className="space-y-2 pt-1 border-t border-zinc-800/50">
+                      {/* Regular action buttons */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {actions.map(a => (
+                          <button
+                            key={a.label}
+                            onClick={a.onClick}
+                            className={cn(
+                              'flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] uppercase tracking-widest transition-all',
+                              a.variant === 'violet'
+                                ? 'bg-violet-900/40 hover:bg-violet-800/50 border border-violet-700/60 hover:border-violet-600 text-violet-300 hover:text-violet-100'
+                                : 'bg-zinc-800/70 hover:bg-zinc-700/70 border border-zinc-700 hover:border-zinc-600 text-zinc-400 hover:text-zinc-200'
+                            )}
+                          >
+                            <span>{a.icon}</span>
+                            {a.label}
+                          </button>
+                        ))}
+                        {/* Add new player button — opens inline input */}
+                        {!addingPlayer && (
+                          <button
+                            onClick={() => setAddingPlayer(true)}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-zinc-800/70 hover:bg-zinc-700/70 border border-dashed border-zinc-600 hover:border-zinc-500 rounded-lg text-[9px] uppercase tracking-widest text-zinc-500 hover:text-zinc-300 transition-all"
+                          >
+                            <Plus size={9} /> Nowy gracz
+                          </button>
+                        )}
+                        {/* Zmień miejsce — always */}
+                        <button
+                          onClick={() => {
+                            const lastIdx = nodes.length - 1;
+                            insertAfter(lastIdx, { id: makeId(), type: 'location', locationName: '', locationDescription: '', content: '' });
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-zinc-800/70 hover:bg-zinc-700/70 border border-zinc-700 hover:border-zinc-600 rounded-lg text-[9px] uppercase tracking-widest text-zinc-400 hover:text-zinc-200 transition-all"
+                        >
+                          <span>📍</span> Zmień miejsce
+                        </button>
+                      </div>
+
+                      {/* Inline add player form */}
+                      {addingPlayer && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <input
+                            autoFocus
+                            value={newPlayerName}
+                            onChange={e => setNewPlayerName(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') handleConfirmAddPlayer(nodes.length - 1);
+                              if (e.key === 'Escape') { setAddingPlayer(false); setNewPlayerName(''); }
+                            }}
+                            className="flex-1 bg-zinc-900 border border-violet-700/60 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-violet-500"
+                            placeholder="Imię nowego gracza..."
+                          />
+                          <button
+                            onClick={() => handleConfirmAddPlayer(nodes.length - 1)}
+                            className="px-3 py-1.5 bg-violet-900/50 border border-violet-700 text-violet-300 hover:bg-violet-800/50 rounded-lg text-[9px] uppercase tracking-widest transition-all"
+                          >
+                            Dodaj
+                          </button>
+                          <button
+                            onClick={() => { setAddingPlayer(false); setNewPlayerName(''); }}
+                            className="text-zinc-600 hover:text-zinc-400 transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Active players chips */}
+                      {activePlayers.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-0.5">
+                          <span className="text-[8px] uppercase tracking-widest text-zinc-700 self-center">W sesji:</span>
+                          {activePlayers.map(name => (
+                            <span key={name} className="flex items-center gap-1 px-2 py-0.5 bg-violet-950/40 border border-violet-800/50 rounded-full text-[9px] text-violet-400">
+                              {name}
+                              <button
+                                onClick={() => removePlayer(name)}
+                                className="text-violet-600 hover:text-red-400 transition-colors ml-0.5"
+                                title={`Usuń ${name} z sesji`}
+                              >
+                                <X size={8} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Footer buttons */}
+      <div className="flex gap-2 pt-2">
+        <button
+          onClick={handleSave}
+          disabled={isSaving || !canSave}
+          className="flex items-center gap-2 px-5 py-2.5 bg-white text-black font-bold rounded-xl text-xs uppercase tracking-widest hover:bg-zinc-200 disabled:opacity-40 transition-all"
+        >
+          {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          {isSaving ? 'Zapisuję i podsumowuję...' : 'Zapisz sesję'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="flex items-center gap-2 px-4 py-2 border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 rounded-xl text-xs uppercase tracking-widest transition-all"
+        >
+          <X size={14} /> Anuluj
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── GM ASSISTANT TAB ────────────────────────────────────────────────────────
+
+function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; onNPCSaved: () => void }) {
+  const pc = characters.find(c => c.type === 'PC');
+  const npcs = characters.filter(c => c.type === 'NPC');
+
+  // --- Session History ---
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [showAddSession, setShowAddSession] = useState(false);
+  const [isSavingSession, setIsSavingSession] = useState(false);
+  const [sessionsExpanded, setSessionsExpanded] = useState(false);
+
+  // --- Main Assistant ---
+  const [gmPost, setGmPost] = useState('');
+  const [additionalInstructions, setAdditionalInstructions] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzeStatus, setAnalyzeStatus] = useState('');
+
+  // Generated response
+  const [generatedResponse, setGeneratedResponse] = useState('');
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // NPC detection
+  const [npcResult, setNpcResult] = useState<NPCDetectionResult | null>(null);
+  // Track per-NPC acceptance: 'pending' | 'accepted' | 'rejected'
+  const [newNpcStates, setNewNpcStates] = useState<Record<number, 'pending' | 'accepted' | 'rejected'>>({});
+  const [updNpcStates, setUpdNpcStates] = useState<Record<number, 'pending' | 'accepted' | 'rejected'>>({});
+  const [editingNewNpc, setEditingNewNpc] = useState<Record<number, Partial<DetectedNPC>>>({});
+
+  const fetchSessions = useCallback(async () => {
+    const res = await fetch('/api/sessions');
+    if (res.ok) setSessions(await res.json());
+  }, []);
+
+  useEffect(() => { fetchSessions(); }, [fetchSessions]);
+
+  const handleAddSession = async (sessionText: string, sessionTitle: string) => {
+    if (!sessionText.trim()) return;
+    setIsSavingSession(true);
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: sessionTitle.trim() || null, raw_text: sessionText }),
+      });
+      const { id } = await res.json();
+      const summary = await summarizeSession(sessionText);
+      await fetch(`/api/sessions/${id}/summary`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary }),
+      });
+      setShowAddSession(false);
+      fetchSessions();
+    } finally {
+      setIsSavingSession(false);
+    }
+  };
+
+  const handleDeleteSession = async (id: number) => {
+    if (!confirm('Usunąć tę sesję?')) return;
+    await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+    fetchSessions();
+  };
+
+  const handleAnalyze = async () => {
+    if (!gmPost.trim()) return;
+    setIsAnalyzing(true);
+    setNpcResult(null);
+    setNewNpcStates({});
+    setUpdNpcStates({});
+    setGeneratedResponse('');
+    try {
+      // Fetch context (session summaries + recent full posts)
+      setAnalyzeStatus('Pobieranie kontekstu sesji...');
+      const ctxRes = await fetch('/api/sessions/context');
+      const ctx = ctxRes.ok ? await ctxRes.json() : { summaries: [], recentFull: [] };
+
+      setAnalyzeStatus('Generowanie odpowiedzi...');
+      // Run response generation and NPC detection in parallel
+      const [response, detected] = await Promise.all([
+        pc ? generatePlayerResponse({
+          gmPost,
+          character: pc,
+          sessionSummaries: ctx.summaries || [],
+          recentPosts: ctx.recentFull || [],
+          additionalInstructions: additionalInstructions.trim() || undefined,
+        }) : Promise.resolve(''),
+        extractNPCsFromGMPost({
+          gmPost,
+          knownNPCs: npcs.map(n => ({ id: n.id, name: n.name, appearance: n.appearance, personality: n.personality })),
+          playerName: pc?.name || 'Gracz',
+        }),
+      ]);
+
+      setGeneratedResponse(response);
+      setNpcResult(detected);
+      // init states
+      const ns: Record<number, 'pending'> = {};
+      detected.new_npcs.forEach((_, i) => { ns[i] = 'pending'; });
+      setNewNpcStates(ns);
+      const us: Record<number, 'pending'> = {};
+      detected.updated_npcs.forEach((_, i) => { us[i] = 'pending'; });
+      setUpdNpcStates(us);
+    } finally {
+      setIsAnalyzing(false);
+      setAnalyzeStatus('');
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!gmPost.trim() || !pc) return;
+    setIsRegenerating(true);
+    try {
+      const ctxRes = await fetch('/api/sessions/context');
+      const ctx = ctxRes.ok ? await ctxRes.json() : { summaries: [], recentFull: [] };
+      const response = await generatePlayerResponse({
+        gmPost,
+        character: pc,
+        sessionSummaries: ctx.summaries || [],
+        recentPosts: ctx.recentFull || [],
+        additionalInstructions: additionalInstructions.trim() || undefined,
+      });
+      setGeneratedResponse(response);
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  const handleAcceptNewNPC = async (idx: number) => {
+    const npc = editingNewNpc[idx] ? { ...npcResult!.new_npcs[idx], ...editingNewNpc[idx] } : npcResult!.new_npcs[idx];
+    await fetch('/api/characters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: npc.name, surname: '', type: 'NPC',
+        profession: npc.race_profession,
+        appearance: npc.appearance,
+        personality: npc.personality,
+        avatar_url: '', quote: '', gender: '', age: '', weight: '', height: '',
+        history: '', equipment: '', money: '', skills: '', disadvantages: '',
+        stats: '', general_stats: '', techniques: '',
+      }),
+    });
+    setNewNpcStates(s => ({ ...s, [idx]: 'accepted' }));
+    onNPCSaved();
+  };
+
+  const handleAcceptUpdate = async (idx: number) => {
+    const upd = npcResult!.updated_npcs[idx];
+    const existing = npcs.find(n => n.id === upd.id);
+    if (!existing) return;
+    await fetch(`/api/characters/${upd.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...existing, ...upd.changes }),
+    });
+    setUpdNpcStates(s => ({ ...s, [idx]: 'accepted' }));
+    onNPCSaved();
+  };
+
+  const inputCls = "w-full bg-zinc-900/80 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-zinc-500 transition-colors resize-none";
+  const btnPrimary = "flex items-center gap-2 px-6 py-2.5 bg-white text-black font-bold rounded-xl text-xs uppercase tracking-widest hover:bg-zinc-200 disabled:opacity-40 transition-all";
+  const btnGhost = "flex items-center gap-2 px-4 py-2 border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 rounded-xl text-xs uppercase tracking-widest transition-all";
+
+  const hasNPCs = npcResult && (npcResult.new_npcs.length > 0 || npcResult.updated_npcs.length > 0);
+
+  return (
+    <div className="space-y-8">
+      {/* Header */}
+      <div>
+        <h2 className="text-5xl font-display italic uppercase tracking-tighter">Asystent MG</h2>
+        <p className="text-zinc-500 uppercase tracking-[0.2em] text-xs mt-2">Automatyczna analiza postów i wykrywanie NPC</p>
+      </div>
+
+      {/* ── SESSION HISTORY ── */}
+      <div className="glass-panel rounded-2xl overflow-hidden">
+        <button
+          className="w-full flex items-center justify-between px-6 py-4 text-left"
+          onClick={() => setSessionsExpanded(v => !v)}
+        >
+          <div className="flex items-center gap-3">
+            <BookOpen size={16} className="text-zinc-400" />
+            <span className="text-xs uppercase tracking-widest font-bold text-zinc-300">Historia Sesji</span>
+            <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full">{sessions.length}</span>
+          </div>
+          {sessionsExpanded ? <ChevronUp size={14} className="text-zinc-600" /> : <ChevronDown size={14} className="text-zinc-600" />}
+        </button>
+
+        {sessionsExpanded && (
+          <div className="px-6 pb-6 space-y-4 border-t border-zinc-800/50">
+            <div className="pt-4">
+              {!showAddSession ? (
+                <button onClick={() => setShowAddSession(true)} className={btnGhost}>
+                  <Plus size={14} /> Dodaj sesję
+                </button>
+              ) : (
+                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl">
+                  <SessionBuilder
+                    pcName={pc?.name || 'Gracz'}
+                    onSave={handleAddSession}
+                    onCancel={() => setShowAddSession(false)}
+                    isSaving={isSavingSession}
+                  />
+                </div>
+              )}
+            </div>
+
+            {sessions.length === 0 ? (
+              <p className="text-xs text-zinc-700 italic">Brak zapisanych sesji. Dodaj pierwszą, aby bot mógł uczyć się Twojego stylu lpisania.</p>
+            ) : (
+              <div className="space-y-2">
+                {sessions.map(s => (
+                  <div key={s.id} className="flex items-start gap-3 p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl group">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="text-xs font-bold text-zinc-300 truncate">{s.title || 'Sesja bez tytułu'}</p>
+                        <span className="text-[10px] text-zinc-600 shrink-0">{new Date(s.created_at).toLocaleDateString('pl-PL')}</span>
+                      </div>
+                      {s.summary ? (
+                        <p className="text-[10px] text-zinc-500 line-clamp-2 leading-relaxed">{s.summary}</p>
+                      ) : (
+                        <p className="text-[10px] text-zinc-700 italic">Brak podsumowania</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleDeleteSession(s.id)}
+                      className="shrink-0 text-zinc-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── MAIN ASSISTANT PANEL ── */}
+      <div className="space-y-4">
+        {/* GM Post Input */}
+        <div className="glass-panel p-6 rounded-2xl space-y-4">
+          <h3 className="text-xs uppercase tracking-[0.2em] text-zinc-500 font-bold flex items-center gap-2">
+            <MessageSquare size={14} /> Wiadomość od MG
+          </h3>
+          <textarea
+            value={gmPost}
+            onChange={e => setGmPost(e.target.value)}
+            className={cn(inputCls, 'h-44')}
+            placeholder="Wklej tutaj post od Mistrza Gry (czysty tekst)..."
+          />
+          <div className="space-y-2">
+            <textarea
+              value={additionalInstructions}
+              onChange={e => setAdditionalInstructions(e.target.value)}
+              className={cn(inputCls, 'h-16 text-xs')}
+              placeholder="Dodatkowe wskazówki (opcjonalnie) — np. 'Iowoi atakuje, jest spokojny', 'skup się na myślach'..."
+            />
+          </div>
+          <button
+            onClick={handleAnalyze}
+            disabled={isAnalyzing || !gmPost.trim()}
+            className={cn(btnPrimary, 'w-full justify-center py-3')}
+          >
+            {isAnalyzing
+              ? <><Loader2 size={16} className="animate-spin" />{analyzeStatus || 'Analizuję...'}</>
+              : <><Bot size={16} />Analizuj post MG</>}
+          </button>
+          {!pc && (
+            <p className="text-[10px] text-amber-500/70 flex items-center gap-1">
+              <AlertCircle size={11} /> Stwórz najpierw swój PC, żeby bot generował odpowiedzi w jego imieniu.
+            </p>
+          )}
+        </div>
+
+        {/* Results */}
+        {(generatedResponse || hasNPCs) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* ── LEFT: NPC Detection ── */}
+            {hasNPCs && (
+              <div className="glass-panel p-6 rounded-2xl space-y-4">
+                <h3 className="text-xs uppercase tracking-[0.2em] text-zinc-500 font-bold flex items-center gap-2">
+                  <Users size={14} /> Wykryci NPC
+                </h3>
+
+                {/* New NPCs */}
+                {npcResult!.new_npcs.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-[9px] uppercase tracking-widest text-zinc-600 border-b border-zinc-800 pb-1">Nowi NPC</p>
+                    {npcResult!.new_npcs.map((npc, idx) => {
+                      const st = newNpcStates[idx] ?? 'pending';
+                      const edited = editingNewNpc[idx] ?? {};
+                      const current = { ...npc, ...edited };
+                      return (
+                        <div key={idx} className={cn(
+                          'p-4 rounded-xl border space-y-3 transition-all',
+                          st === 'accepted' ? 'border-emerald-800/50 bg-emerald-950/20'
+                            : st === 'rejected' ? 'border-zinc-800/30 bg-zinc-900/20 opacity-40'
+                              : 'border-zinc-700 bg-zinc-900/50'
+                        )}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-bold text-zinc-200">{current.name}</p>
+                              <p className="text-[10px] text-zinc-500">{current.race_profession}</p>
+                            </div>
+                            {st === 'accepted' && (
+                              <span className="text-[9px] text-emerald-400 flex items-center gap-1">
+                                <Check size={10} /> Dodano
+                              </span>
+                            )}
+                          </div>
+
+                          {st === 'pending' && (
+                            <>
+                              <div className="space-y-2">
+                                <textarea
+                                  value={current.appearance}
+                                  onChange={e => setEditingNewNpc(prev => ({ ...prev, [idx]: { ...prev[idx], appearance: e.target.value } }))}
+                                  className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-[10px] h-16 focus:outline-none focus:border-zinc-600 resize-none"
+                                  placeholder="Wygląd..."
+                                />
+                                <textarea
+                                  value={current.personality}
+                                  onChange={e => setEditingNewNpc(prev => ({ ...prev, [idx]: { ...prev[idx], personality: e.target.value } }))}
+                                  className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-[10px] h-20 focus:outline-none focus:border-zinc-600 resize-none"
+                                  placeholder="Osobowość / relacja z graczem..."
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => handleAcceptNewNPC(idx)}
+                                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-900/50 border border-emerald-700 text-emerald-300 hover:bg-emerald-800/50 rounded-lg text-[9px] uppercase tracking-widest transition-all"
+                                >
+                                  <Check size={10} /> Dodaj NPC
+                                </button>
+                                <button
+                                  onClick={() => setNewNpcStates(s => ({ ...s, [idx]: 'rejected' }))}
+                                  className="flex items-center gap-1 px-3 py-1.5 border border-zinc-700 text-zinc-500 hover:text-red-400 hover:border-red-800 rounded-lg text-[9px] uppercase tracking-widest transition-all"
+                                >
+                                  <X size={10} /> Odrzuć
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Updated NPCs */}
+                {npcResult!.updated_npcs.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-[9px] uppercase tracking-widest text-zinc-600 border-b border-zinc-800 pb-1">Aktualizacje NPC</p>
+                    {npcResult!.updated_npcs.map((upd, idx) => {
+                      const st = updNpcStates[idx] ?? 'pending';
+                      return (
+                        <div key={idx} className={cn(
+                          'p-4 rounded-xl border space-y-2 transition-all',
+                          st === 'accepted' ? 'border-emerald-800/50 bg-emerald-950/20'
+                            : st === 'rejected' ? 'border-zinc-800/30 opacity-40'
+                              : 'border-zinc-700 bg-zinc-900/50'
+                        )}>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-bold text-zinc-200">{upd.name}</p>
+                            {st === 'accepted' && (
+                              <span className="text-[9px] text-emerald-400 flex items-center gap-1">
+                                <Check size={10} /> Zaktualizowano
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-amber-400/80 italic leading-relaxed">{upd.reason}</p>
+                          {Object.entries(upd.changes).map(([field, val]) => (
+                            <div key={field} className="bg-zinc-800/30 rounded p-2">
+                              <p className="text-[9px] uppercase tracking-widest text-zinc-600 mb-1">{field}</p>
+                              <p className="text-[10px] text-zinc-400 leading-relaxed">{val as string}</p>
+                            </div>
+                          ))}
+                          {st === 'pending' && (
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                onClick={() => handleAcceptUpdate(idx)}
+                                className="flex items-center gap-1 px-3 py-1.5 bg-emerald-900/50 border border-emerald-700 text-emerald-300 hover:bg-emerald-800/50 rounded-lg text-[9px] uppercase tracking-widest transition-all"
+                              >
+                                <Check size={10} /> Zatwierdź
+                              </button>
+                              <button
+                                onClick={() => setUpdNpcStates(s => ({ ...s, [idx]: 'rejected' }))}
+                                className="flex items-center gap-1 px-3 py-1.5 border border-zinc-700 text-zinc-500 hover:text-red-400 hover:border-red-800 rounded-lg text-[9px] uppercase tracking-widest transition-all"
+                              >
+                                <X size={10} /> Odrzuć
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── RIGHT: Generated Response ── */}
+            {generatedResponse && (
+              <div className={cn('glass-panel p-6 rounded-2xl space-y-4', !hasNPCs && 'lg:col-span-2')}>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs uppercase tracking-[0.2em] text-zinc-500 font-bold flex items-center gap-2">
+                    <FileText size={14} /> Wygenerowany odpis (BBCode)
+                  </h3>
+                  <button
+                    onClick={handleRegenerate}
+                    disabled={isRegenerating}
+                    className={btnGhost}
+                  >
+                    {isRegenerating
+                      ? <Loader2 size={12} className="animate-spin" />
+                      : <RefreshCw size={12} />}
+                    Regeneruj
+                  </button>
+                </div>
+
+                <textarea
+                  value={generatedResponse}
+                  onChange={e => setGeneratedResponse(e.target.value)}
+                  className={cn(inputCls, 'h-80 font-mono text-xs leading-relaxed')}
+                />
+
+                <div className="p-3 bg-zinc-950/50 rounded-xl border border-zinc-800 space-y-1">
+                  <p className="text-[9px] uppercase tracking-widest text-zinc-600 mb-2">Podgląd formatowania</p>
+                  <div className="text-xs text-zinc-300 leading-relaxed">
+                    {generatedResponse.split('\n').map((line, i) => {
+                      // Simple BBCode preview: bold, italic
+                      const rendered = line
+                        .replace(/\[b\](.*?)\[\/b\]/g, '<strong>$1</strong>')
+                        .replace(/\[i\](.*?)\[\/i\]/g, '<em>$1</em>');
+                      return <p key={i} dangerouslySetInnerHTML={{ __html: rendered || '&nbsp;' }} />;
+                    })}
+                  </div>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(generatedResponse);
+                    alert('Skopiowano do schowka!');
+                  }}
+                  className={cn(btnGhost, 'w-full justify-center')}
+                >
+                  <ScrollText size={13} /> Kopiuj do schowka
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!generatedResponse && !hasNPCs && !isAnalyzing && gmPost && (
+          <div className="text-center py-12 text-zinc-700">
+            <Bot size={32} className="mx-auto mb-3 opacity-30" />
+            <p className="text-xs uppercase tracking-widest">Kliknij "Analizuj" aby uruchomić asystenta</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── LOCATIONS TAB ─────────────────────────────────────────────────────────
+
+function LocationForm({
+  location,
+  onSave,
+  onCancel,
+}: {
+  location?: Partial<Location>;
+  onSave: (l: Partial<Location>) => void;
+  onCancel: () => void;
+}) {
+  const [formData, setFormData] = useState<Partial<Location>>(
+    location || { name: '', description: '', notes: '', avatar_url: '' }
+  );
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const taCls = "w-full bg-zinc-950/50 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-500 transition-colors resize-none placeholder:text-zinc-600";
+  const inCls = "w-full bg-zinc-950/50 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-500 transition-colors placeholder:text-zinc-600";
+
+  return (
+    <div className="glass-panel p-6 sm:p-8 rounded-2xl w-full max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+        <h2 className="text-2xl font-display italic tracking-tight text-white">
+          {location ? 'Edytuj Miejsce' : 'Nowe Miejsce'}
+        </h2>
+        <button onClick={onCancel} className="text-zinc-500 hover:text-white transition-colors">
+          <X size={20} />
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 ml-1">Nazwa</label>
+          <input name="name" value={formData.name || ''} onChange={handleChange} className={inCls} required />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 ml-1">URL Obrazka / Mapy</label>
+          <input name="avatar_url" value={formData.avatar_url || ''} onChange={handleChange} className={inCls} placeholder="https://..." />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-amber-500/70 font-bold mb-2 ml-1 flex items-center gap-2"><MapPin size={12} /> Opis / Wygląd</label>
+          <textarea name="description" value={formData.description || ''} onChange={handleChange} className={cn(taCls, "h-32 leading-relaxed")} />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-amber-500/70 font-bold mb-2 ml-1 flex items-center gap-2"><BookOpen size={12} /> Notatki MG / Gracza</label>
+          <textarea name="notes" value={formData.notes || ''} onChange={handleChange} className={cn(taCls, "h-32 text-zinc-400")} />
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-3 pt-4 border-t border-zinc-800/50">
+        <button onClick={onCancel} className="px-6 py-2.5 border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 hover:bg-zinc-800/50 rounded-xl text-xs uppercase tracking-widest font-bold transition-all">Anuluj</button>
+        <button onClick={() => onSave(formData)} disabled={!formData.name} className="flex items-center gap-2 px-6 py-2.5 bg-amber-600 text-white font-bold rounded-xl text-xs uppercase tracking-widest hover:bg-amber-500 disabled:opacity-50 transition-all">
+          <Save size={16} /> Zapisz
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LocationsTab({ locations, onSave, onDelete }: { locations: Location[], onSave: (l: Partial<Location>) => void, onDelete: (id: number) => void }) {
+  const [editingId, setEditingId] = useState<number | 'new' | null>(null);
+
+  if (editingId) {
+    const loc = editingId === 'new' ? undefined : locations.find(l => l.id === editingId);
+    return (
+      <div className="flex justify-center py-8">
+        <LocationForm
+          location={loc}
+          onSave={(data) => { onSave(data); setEditingId(null); }}
+          onCancel={() => setEditingId(null)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-5xl font-display italic uppercase tracking-tighter text-white">Miejsca</h2>
+          <p className="text-amber-500/70 uppercase tracking-[0.2em] text-xs mt-2 font-bold flex items-center gap-2">
+            <MapPin size={14} /> Odwiedzone lokacje
+          </p>
+        </div>
+        <button onClick={() => setEditingId('new')} className="flex items-center justify-center gap-2 px-6 py-3 bg-amber-600 text-white font-bold rounded-xl text-xs uppercase tracking-widest hover:bg-amber-500 transition-all shadow-[0_0_20px_rgba(217,119,6,0.2)]">
+          <Plus size={16} /> Dodaj miejsce
+        </button>
+      </div>
+
+      {locations.length === 0 ? (
+        <div className="text-center py-24 glass-panel rounded-2xl border-dashed border-zinc-800">
+          <MapPin size={48} className="mx-auto text-zinc-800 mb-4" />
+          <p className="text-zinc-500 uppercase tracking-widest text-sm">Brak odwiedzonych miejsc</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {locations.map(loc => (
+            <div key={loc.id} className="glass-panel rounded-2xl overflow-hidden group hover:border-amber-500/30 transition-colors flex flex-col h-full">
+              {loc.avatar_url && (
+                <div className="h-48 w-full overflow-hidden relative border-b border-zinc-800/50">
+                  <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent z-10" />
+                  <img src={loc.avatar_url} alt={loc.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                </div>
+              )}
+              <div className="p-5 flex-1 flex flex-col">
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <h3 className="text-xl font-display italic text-amber-500">{loc.name}</h3>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => setEditingId(loc.id)} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"><Edit2 size={14} /></button>
+                    <button onClick={() => { if (confirm('Usunąć?')) onDelete(loc.id); }} className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+                {loc.description && (
+                  <p className="text-xs text-zinc-400 leading-relaxed mb-4 line-clamp-3 flex-1">{loc.description}</p>
+                )}
+                {loc.notes && (
+                  <div className="mt-auto pt-4 border-t border-zinc-800/50">
+                    <p className="text-[10px] uppercase tracking-widest text-zinc-600 font-bold mb-1">Notatki</p>
+                    <p className="text-xs text-zinc-500 line-clamp-2">{loc.notes}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ENCOUNTERED PLAYERS TAB ───────────────────────────────────────────────
+
+function EncounteredPlayerForm({
+  player,
+  onSave,
+  onCancel,
+}: {
+  player?: Partial<EncounteredPlayer>;
+  onSave: (p: Partial<EncounteredPlayer>) => void;
+  onCancel: () => void;
+}) {
+  const [formData, setFormData] = useState<Partial<EncounteredPlayer>>(
+    player || { name: '', character_name: '', description: '', relationship: '', notes: '', avatar_url: '' }
+  );
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const taCls = "w-full bg-zinc-950/50 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-violet-500 transition-colors resize-none placeholder:text-zinc-600";
+  const inCls = "w-full bg-zinc-950/50 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-violet-500 transition-colors placeholder:text-zinc-600";
+
+  return (
+    <div className="glass-panel p-6 sm:p-8 rounded-2xl w-full max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+        <h2 className="text-2xl font-display italic tracking-tight text-white">
+          {player ? 'Edytuj Gracza' : 'Nowy Napotkany Gracz'}
+        </h2>
+        <button onClick={onCancel} className="text-zinc-500 hover:text-white transition-colors">
+          <X size={20} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 ml-1">Nazwa Gracza / Serwera</label>
+          <input name="name" value={formData.name || ''} onChange={handleChange} className={inCls} required />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 ml-1">Imię Postaci</label>
+          <input name="character_name" value={formData.character_name || ''} onChange={handleChange} className={inCls} />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 ml-1">Relacja / Nastawienie</label>
+          <input name="relationship" value={formData.relationship || ''} onChange={handleChange} className={inCls} placeholder="np. Przyjaciel, Wróg, Neutralny..." />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 ml-1">URL Awatara</label>
+          <input name="avatar_url" value={formData.avatar_url || ''} onChange={handleChange} className={inCls} />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-[10px] uppercase tracking-widest text-violet-400 font-bold mb-2 ml-1 flex items-center gap-2"><User size={12} /> Opis Postaci</label>
+          <textarea name="description" value={formData.description || ''} onChange={handleChange} className={cn(taCls, "h-24 leading-relaxed")} />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-[10px] uppercase tracking-widest text-violet-400 font-bold mb-2 ml-1 flex items-center gap-2"><BookOpen size={12} /> Notatki z sesji</label>
+          <textarea name="notes" value={formData.notes || ''} onChange={handleChange} className={cn(taCls, "h-32 text-zinc-400")} />
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-3 pt-4 border-t border-zinc-800/50">
+        <button onClick={onCancel} className="px-6 py-2.5 border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 hover:bg-zinc-800/50 rounded-xl text-xs uppercase tracking-widest font-bold transition-all">Anuluj</button>
+        <button onClick={() => onSave(formData)} disabled={!formData.name} className="flex items-center gap-2 px-6 py-2.5 bg-violet-600 text-white font-bold rounded-xl text-xs uppercase tracking-widest hover:bg-violet-500 disabled:opacity-50 transition-all">
+          <Save size={16} /> Zapisz
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EncounteredPlayersTab({ players, onSave, onDelete }: { players: EncounteredPlayer[], onSave: (p: Partial<EncounteredPlayer>) => void, onDelete: (id: number) => void }) {
+  const [editingId, setEditingId] = useState<number | 'new' | null>(null);
+
+  if (editingId) {
+    const pl = editingId === 'new' ? undefined : players.find(p => p.id === editingId);
+    return (
+      <div className="flex justify-center py-8">
+        <EncounteredPlayerForm
+          player={pl}
+          onSave={(data) => { onSave(data); setEditingId(null); }}
+          onCancel={() => setEditingId(null)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-5xl font-display italic uppercase tracking-tighter text-white">Napotkani Gracze</h2>
+          <p className="text-violet-400 uppercase tracking-[0.2em] text-xs mt-2 font-bold flex items-center gap-2">
+            <Users2 size={14} /> Inne postacie ze świata
+          </p>
+        </div>
+        <button onClick={() => setEditingId('new')} className="flex items-center justify-center gap-2 px-6 py-3 bg-violet-600 text-white font-bold rounded-xl text-xs uppercase tracking-widest hover:bg-violet-500 transition-all shadow-[0_0_20px_rgba(124,58,237,0.2)]">
+          <Plus size={16} /> Dodaj gracza
+        </button>
+      </div>
+
+      {players.length === 0 ? (
+        <div className="text-center py-24 glass-panel rounded-2xl border-dashed border-zinc-800">
+          <Users2 size={48} className="mx-auto text-zinc-800 mb-4" />
+          <p className="text-zinc-500 uppercase tracking-widest text-sm">Brak zapisanych graczy</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {players.map(pl => (
+            <div key={pl.id} className="glass-panel rounded-2xl overflow-hidden group hover:border-violet-500/30 transition-colors flex flex-col h-full">
+              {pl.avatar_url && (
+                <div className="h-48 w-full overflow-hidden relative border-b border-zinc-800/50">
+                  <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/20 to-transparent z-10" />
+                  <img src={pl.avatar_url} alt={pl.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 object-top" />
+                </div>
+              )}
+              <div className="p-5 flex-1 flex flex-col relative z-20 -mt-2">
+                <div className="flex items-start justify-between gap-4 mb-1">
+                  <div>
+                    <h3 className="text-xl font-display italic text-violet-400">{pl.character_name || 'Nieznana postać'}</h3>
+                    <p className="text-[10px] uppercase tracking-widest text-zinc-500">Gracz: {pl.name}</p>
+                  </div>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-950/50 p-1 rounded-xl backdrop-blur-sm border border-zinc-800/50">
+                    <button onClick={() => setEditingId(pl.id)} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"><Edit2 size={12} /></button>
+                    <button onClick={() => { if (confirm('Usunąć?')) onDelete(pl.id); }} className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors"><Trash2 size={12} /></button>
+                  </div>
+                </div>
+
+                {pl.relationship && (
+                  <div className="mt-3 inline-block px-2.5 py-1 bg-violet-950/50 border border-violet-900/50 rounded-lg text-[9px] uppercase tracking-widest text-violet-300 w-fit">
+                    Relacja: {pl.relationship}
+                  </div>
+                )}
+
+                {pl.description && (
+                  <p className="text-xs text-zinc-400 leading-relaxed mt-4 line-clamp-2">{pl.description}</p>
+                )}
+
+                {pl.notes && (
+                  <div className="mt-auto pt-4 border-t border-zinc-800/50">
+                    <p className="text-[10px] uppercase tracking-widest text-violet-500/70 font-bold mb-1">Notatki z sesji</p>
+                    <p className="text-xs text-zinc-500 line-clamp-3">{pl.notes}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // --- Main App ---
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'PC' | 'NPC' | 'POSTS'>('PC');
+  const [activeTab, setActiveTab] = useState<'PC' | 'NPC' | 'POSTS' | 'ASSISTANT' | 'LOCATIONS' | 'PLAYERS'>('PC');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [encounteredPlayers, setEncounteredPlayers] = useState<EncounteredPlayer[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -2765,9 +3877,14 @@ export default function App() {
     try {
       const charRes = await fetch('/api/characters');
       const postsRes = await fetch('/api/posts');
+      const locRes = await fetch('/api/locations');
+      const plRes = await fetch('/api/encountered-players');
+
       const chars = await charRes.json();
       setCharacters(chars);
       setPosts(await postsRes.json());
+      setLocations(await locRes.json());
+      setEncounteredPlayers(await plRes.json());
 
       // Load stat history for PCs immediately
       for (const c of chars) {
@@ -2778,6 +3895,42 @@ export default function App() {
     } catch (error) {
       console.error('Failed to fetch data:', error);
     }
+  };
+
+  const handleSaveLocation = async (loc: Partial<Location>) => {
+    try {
+      if (loc.id) {
+        await fetch(`/api/locations/${loc.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(loc) });
+      } else {
+        await fetch('/api/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(loc) });
+      }
+      fetchData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleDeleteLocation = async (id: number) => {
+    try {
+      await fetch(`/api/locations/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleSavePlayer = async (pl: Partial<EncounteredPlayer>) => {
+    try {
+      if (pl.id) {
+        await fetch(`/api/encountered-players/${pl.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pl) });
+      } else {
+        await fetch('/api/encountered-players', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pl) });
+      }
+      fetchData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleDeletePlayer = async (id: number) => {
+    try {
+      await fetch(`/api/encountered-players/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (e) { console.error(e); }
   };
 
   const fetchStatHistory = async (id: number) => {
@@ -2940,10 +4093,28 @@ export default function App() {
             onClick={() => { setActiveTab('NPC'); setIsEditing(false); setSidebarOpen(false); }}
           />
           <SidebarItem
+            icon={MapPin}
+            label="Miejsca"
+            active={activeTab === 'LOCATIONS'}
+            onClick={() => { setActiveTab('LOCATIONS'); setIsEditing(false); setSidebarOpen(false); }}
+          />
+          <SidebarItem
+            icon={Users2}
+            label="Napotkani Gracze"
+            active={activeTab === 'PLAYERS'}
+            onClick={() => { setActiveTab('PLAYERS'); setIsEditing(false); setSidebarOpen(false); }}
+          />
+          <SidebarItem
             icon={MessageSquare}
             label="Przygoda"
             active={activeTab === 'POSTS'}
             onClick={() => { setActiveTab('POSTS'); setIsEditing(false); setSidebarOpen(false); }}
+          />
+          <SidebarItem
+            icon={Bot}
+            label="Asystent MG"
+            active={activeTab === 'ASSISTANT'}
+            onClick={() => { setActiveTab('ASSISTANT'); setIsEditing(false); setSidebarOpen(false); }}
           />
         </nav>
 
@@ -3249,6 +4420,36 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'LOCATIONS' && (
+            <motion.div
+              key="locations"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <LocationsTab
+                locations={locations}
+                onSave={handleSaveLocation}
+                onDelete={handleDeleteLocation}
+              />
+            </motion.div>
+          )}
+
+          {activeTab === 'PLAYERS' && (
+            <motion.div
+              key="players"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <EncounteredPlayersTab
+                players={encounteredPlayers}
+                onSave={handleSavePlayer}
+                onDelete={handleDeletePlayer}
+              />
+            </motion.div>
+          )}
+
           {activeTab === 'POSTS' && (
             <motion.div
               key="posts"
@@ -3376,6 +4577,20 @@ export default function App() {
                   ))}
                 </div>
               </div>
+            </motion.div>
+          )}
+          {activeTab === 'ASSISTANT' && (
+            <motion.div
+              key="assistant"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <GMAssistantTab
+                characters={characters}
+                onNPCSaved={fetchData}
+              />
             </motion.div>
           )}
         </AnimatePresence>
