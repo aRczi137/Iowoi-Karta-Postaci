@@ -3273,7 +3273,7 @@ function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; o
                     </div>
                     <button
                       onClick={() => handleDeleteSession(s.id)}
-                      className="shrink-0 text-zinc-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                      className="shrink-0 text-zinc-700 hover:text-red-500 transition-all"
                     >
                       <Trash2 size={13} />
                     </button>
