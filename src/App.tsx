@@ -3120,6 +3120,10 @@ function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; o
   const handleAddSession = async (sessionText: string, sessionTitle: string) => {
     if (!sessionText.trim()) return;
     setIsSavingSession(true);
+    setNpcResult(null);
+    setNewNpcStates({});
+    setUpdNpcStates({});
+    setGeneratedResponse('');
     try {
       const res = await fetch('/api/sessions', {
         method: 'POST',
@@ -3127,7 +3131,16 @@ function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; o
         body: JSON.stringify({ title: sessionTitle.trim() || null, raw_text: sessionText }),
       });
       const { id } = await res.json();
-      const summary = await summarizeSession(sessionText);
+      
+      const [summary, detected] = await Promise.all([
+        summarizeSession(sessionText),
+        extractNPCsFromGMPost({
+          gmPost: sessionText,
+          knownNPCs: npcs.map(n => ({ id: n.id, name: n.name, appearance: n.appearance, personality: n.personality })),
+          playerName: pc?.name || 'Gracz',
+        })
+      ]);
+
       await fetch(`/api/sessions/${id}/summary`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -3135,6 +3148,17 @@ function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; o
       });
       setShowAddSession(false);
       fetchSessions();
+
+      setNpcResult(detected);
+      
+      const ns: Record<number, 'pending'> = {};
+      detected.new_npcs.forEach((_, i) => { ns[i] = 'pending'; });
+      setNewNpcStates(ns);
+      
+      const us: Record<number, 'pending'> = {};
+      detected.updated_npcs.forEach((_, i) => { us[i] = 'pending'; });
+      setUpdNpcStates(us);
+
     } finally {
       setIsSavingSession(false);
     }
