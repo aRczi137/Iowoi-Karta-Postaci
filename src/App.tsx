@@ -2754,11 +2754,15 @@ function SessionBuilder({
   onSave,
   onCancel,
   isSaving,
+  encounteredPlayers,
+  onPlayerEncountered
 }: {
   pcName: string;
   onSave: (text: string, title: string) => void;
   onCancel: () => void;
   isSaving: boolean;
+  encounteredPlayers: EncounteredPlayer[];
+  onPlayerEncountered: (pl: Partial<EncounteredPlayer>) => void;
 }) {
   const [title, setTitle] = useState('');
   const [nodes, setNodes] = useState<SNode[]>([
@@ -2791,6 +2795,19 @@ function SessionBuilder({
     if (!name) return;
     if (!activePlayers.includes(name)) {
       setActivePlayers(prev => [...prev, name]);
+      
+      // Auto-add to global encountered players list if not exists
+      const exists = encounteredPlayers.some(p => p.name.toLowerCase() === name.toLowerCase());
+      if (!exists && onPlayerEncountered) {
+        onPlayerEncountered({
+          name: name,
+          character_name: '',
+          description: 'Dodany automatycznie podczas tworzenia sesji.',
+          relationship: '',
+          notes: '',
+          avatar_url: ''
+        });
+      }
     }
     // Insert first post node for that player
     insertAfter(idx, { id: makeId(), type: 'other_player', playerName: name, content: '' });
@@ -3083,7 +3100,17 @@ function SessionItem({ s, onDelete }: { s: Session; onDelete: (id: number) => vo
 
 // ─── GM ASSISTANT TAB ────────────────────────────────────────────────────────
 
-function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; onNPCSaved: () => void }) {
+function GMAssistantTab({ 
+  characters, 
+  onNPCSaved,
+  encounteredPlayers,
+  onPlayerEncountered
+}: { 
+  characters: Character[]; 
+  onNPCSaved: () => void;
+  encounteredPlayers: EncounteredPlayer[];
+  onPlayerEncountered: (pl: Partial<EncounteredPlayer>) => void;
+}) {
   const pc = characters.find(c => c.type === 'PC');
   const npcs = characters.filter(c => c.type === 'NPC');
 
@@ -3322,6 +3349,8 @@ function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; o
                     onSave={handleAddSession}
                     onCancel={() => setShowAddSession(false)}
                     isSaving={isSavingSession}
+                    encounteredPlayers={encounteredPlayers}
+                    onPlayerEncountered={onPlayerEncountered}
                   />
                 </div>
               )}
@@ -4585,6 +4614,7 @@ export default function App() {
                 </div>
               </div>
 
+
               {/* Manga Panel Preview */}
               {mangaPanel && (
                 <motion.div
@@ -4645,6 +4675,8 @@ export default function App() {
               <GMAssistantTab
                 characters={characters}
                 onNPCSaved={fetchData}
+                encounteredPlayers={encounteredPlayers}
+                onPlayerEncountered={handleSavePlayer}
               />
             </motion.div>
           )}
