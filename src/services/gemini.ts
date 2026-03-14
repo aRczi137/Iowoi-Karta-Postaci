@@ -350,7 +350,8 @@ INSTRUKCJE:
 2. Zidentyfikuj wszystkie POSTACIE, które NIE są postacią gracza (${playerName}).
 3. Porównaj z listą ZNANYCH NPC.
 4. Dla każdego nowego NPC (nie ma na liście znanych): dodaj do "new_npcs".
-5. Dla każdego już ZNANYCH NPC, jeśli post zawiera NOWE informacje (nowe fakty, zmiana osobowości, nowe zdarzenia): dodaj do "updated_npcs" z polem "changes" zawierającym TYLKO zmienione pola i "reason" wyjaśniający po polsku co się zmieniło.
+5. Dla każdego już ZNANYCH NPC, jeśli post zawiera NOWE informacje (nowe fakty, zmiana osobowości, nowe zdarzenia): dodaj do "updated_npcs" z polem "changes" zawierającym TYLKO zmienione pola (appearance, personality) i podaj "reason".
+   UWAGA: "reason" służy jako "Notatka z sesji" dopisywana do historii postaci. Powinien być zwięzłym, jedno- lub dwu-zdaniowym kronikarskim podsumowaniem tego, co się jej dzisiaj przydarzyło i co nowego o niej wiemy (np. "Wdaje się w bójkę z graczem i ujawnia zdradę.").
 6. Jeśli żaden NPC się nie pojawia lub brak nowych informacji – zwróć puste tablice.
 7. NIE twórz NPC dla postaci gracza (${playerName}).
 
@@ -380,7 +381,7 @@ Odpowiedz WYŁĄCZNIE poprawnym JSON w formacie:
         "appearance": "string (opcjonalne, tylko jeśli się zmieniło)",
         "personality": "string (opcjonalne, tylko jeśli się zmieniło)"
       },
-      "reason": "string (po polsku: co nowego wiemy o tej postaci)"
+      "reason": "string (po polsku: zwięzłe kronikarskie podsumowanie co mu się dzisiaj przydarzyło)"
     }
   ]
 }`;

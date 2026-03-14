@@ -3257,10 +3257,24 @@ function GMAssistantTab({ characters, onNPCSaved }: { characters: Character[]; o
     const upd = npcResult!.updated_npcs[idx];
     const existing = npcs.find(n => n.id === upd.id);
     if (!existing) return;
+    
+    // Add date formatting
+    const today = new Date();
+    const dateStr = `${today.getDate().toString().padStart(2, '0')}.${(today.getMonth() + 1).toString().padStart(2, '0')}.${today.getFullYear()}`;
+    
+    // Append to existing history
+    let newHistory = existing.history || "Brak historii.";
+    const separator = newHistory.endsWith("\n") || !newHistory ? "" : "\n\n";
+    newHistory += `${separator}--- Notatka z Sesji (${dateStr}) ---\n${upd.reason}`;
+
     await fetch(`/api/characters/${upd.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...existing, ...upd.changes }),
+      body: JSON.stringify({ 
+        ...existing, 
+        ...upd.changes,
+        history: newHistory,
+      }),
     });
     setUpdNpcStates(s => ({ ...s, [idx]: 'accepted' }));
     onNPCSaved();
