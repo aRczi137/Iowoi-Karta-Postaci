@@ -121,10 +121,10 @@ async function startServer() {
         current_hp, current_pr
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
-        name, surname, quote, type, profession, gender, age, weight, height,
-        appearance, history, personality, equipment, money, skills,
-        disadvantages, stats, general_stats, techniques, avatar_url, appearance_images,
-        current_hp, current_pr
+        name ?? null, surname ?? null, quote ?? null, type ?? null, profession ?? null, gender ?? null, age ?? null, weight ?? null, height ?? null,
+        appearance ?? null, history ?? null, personality ?? null, equipment ?? null, money ?? null, skills ?? null,
+        disadvantages ?? null, stats ?? null, general_stats ?? null, techniques ?? null, avatar_url ?? null, appearance_images ?? null,
+        current_hp ?? null, current_pr ?? null
       ]
     });
     res.json({ id: Number(result.lastInsertRowid) });
@@ -146,10 +146,10 @@ async function startServer() {
             current_hp = ?, current_pr = ?
         WHERE id = ?`,
       args: [
-        name, surname, quote, profession, gender, age, weight, height,
-        appearance, history, personality, equipment, money, skills,
-        disadvantages, stats, general_stats, techniques, avatar_url, appearance_images,
-        current_hp, current_pr, req.params.id
+        name ?? null, surname ?? null, quote ?? null, profession ?? null, gender ?? null, age ?? null, weight ?? null, height ?? null,
+        appearance ?? null, history ?? null, personality ?? null, equipment ?? null, money ?? null, skills ?? null,
+        disadvantages ?? null, stats ?? null, general_stats ?? null, techniques ?? null, avatar_url ?? null, appearance_images ?? null,
+        current_hp ?? null, current_pr ?? null, req.params.id
       ]
     });
     res.json({ success: true });
@@ -171,7 +171,7 @@ async function startServer() {
 
     const result = await db.execute({
       sql: `INSERT INTO stat_history (character_id, stat_name, amount, comment) VALUES (?, ?, ?, ?)`,
-      args: [characterId, stat_name, amount, comment]
+      args: [characterId, stat_name ?? null, amount ?? null, comment ?? null]
     });
 
     const charResult = await db.execute({ sql: "SELECT stats, general_stats, profession, skills FROM characters WHERE id = ?", args: [characterId] });
@@ -308,7 +308,7 @@ async function startServer() {
     const { gm_post, player_post, manga_panel_url } = req.body;
     const result = await db.execute({
       sql: `INSERT INTO posts (gm_post, player_post, manga_panel_url) VALUES (?, ?, ?)`,
-      args: [gm_post, player_post, manga_panel_url]
+      args: [gm_post ?? null, player_post ?? null, manga_panel_url ?? null]
     });
     res.json({ id: Number(result.lastInsertRowid) });
   });
@@ -337,7 +337,7 @@ async function startServer() {
 
   app.put("/api/sessions/:id/summary", async (req, res) => {
     const { summary } = req.body;
-    await db.execute({ sql: "UPDATE sessions SET summary = ? WHERE id = ?", args: [summary, req.params.id] });
+    await db.execute({ sql: "UPDATE sessions SET summary = ? WHERE id = ?", args: [summary ?? null, req.params.id] });
     res.json({ success: true });
   });
 
